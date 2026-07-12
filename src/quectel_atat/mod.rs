@@ -870,47 +870,164 @@ impl atat::AtatCmd for SslRecv {
         &self,
         resp: Result<&[u8], atat::InternalError>,
     ) -> Result<Self::Response, atat::Error> {
-        let data = resp.map_err(atat::Error::from)?;
+        parse_socket_recv(resp, b"+QSSLRECV: ")
+    }
+}
 
-        // Locate the "+QSSLRECV: " header.
-        let header = b"+QSSLRECV: ";
-        let start = data
-            .windows(header.len())
-            .position(|w| w == header)
-            .ok_or(atat::Error::InvalidResponse)?
-            + header.len();
-        let after_header = &data[start..];
+/// Shared parser for the `+QSSLRECV: <len>\r\n<binary>` / `+QIRD: <len>\r\n<binary>`
+/// buffer-access read responses. `header` selects the command (e.g.
+/// `b"+QSSLRECV: "` or `b"+QIRD: "`).
+pub(crate) fn parse_socket_recv(
+    resp: Result<&[u8], atat::InternalError>,
+    header: &[u8],
+) -> Result<SslRecvResponse, atat::Error> {
+    let data = resp.map_err(atat::Error::from)?;
 
-        // The decimal length runs up to the first CRLF. If the CRLF is not
-        // present (the response was split across reads and only the header +
-        // length made it into this chunk, e.g. a bare "+QSSLRECV: 0"), treat the
-        // remainder as the length with an empty payload rather than failing —
-        // "0 bytes buffered" is a legitimate, common reply.
-        let (len_str, payload): (&[u8], &[u8]) = match after_header
-            .windows(2)
-            .position(|w| w == b"\r\n")
-        {
+    // Locate the header.
+    let start = data
+        .windows(header.len())
+        .position(|w| w == header)
+        .ok_or(atat::Error::InvalidResponse)?
+        + header.len();
+    let after_header = &data[start..];
+
+    // The decimal length runs up to the first CRLF. If the CRLF is not
+    // present (the response was split across reads and only the header +
+    // length made it into this chunk, e.g. a bare "+QSSLRECV: 0"), treat the
+    // remainder as the length with an empty payload rather than failing —
+    // "0 bytes buffered" is a legitimate, common reply.
+    let (len_str, payload): (&[u8], &[u8]) =
+        match after_header.windows(2).position(|w| w == b"\r\n") {
             Some(crlf) => (&after_header[..crlf], &after_header[crlf + 2..]),
             None => (after_header, &[]),
         };
-        let actual_len = core::str::from_utf8(len_str)
-            .map_err(|_| atat::Error::InvalidResponse)?
-            .trim()
-            .parse::<u16>()
-            .map_err(|_| atat::Error::InvalidResponse)?;
+    let actual_len = core::str::from_utf8(len_str)
+        .map_err(|_| atat::Error::InvalidResponse)?
+        .trim()
+        .parse::<u16>()
+        .map_err(|_| atat::Error::InvalidResponse)?;
 
-        let to_copy = core::cmp::min(actual_len as usize, 512);
-        let to_copy = core::cmp::min(to_copy, payload.len());
+    let to_copy = core::cmp::min(actual_len as usize, 512);
+    let to_copy = core::cmp::min(to_copy, payload.len());
 
-        let mut buffer = Bytes::<512>::new();
-        buffer
-            .extend_from_slice(&payload[..to_copy])
-            .map_err(|_| atat::Error::InvalidResponse)?;
+    let mut buffer = Bytes::<512>::new();
+    buffer
+        .extend_from_slice(&payload[..to_copy])
+        .map_err(|_| atat::Error::InvalidResponse)?;
 
-        Ok(SslRecvResponse {
-            length: to_copy as u16,
-            data: buffer,
-        })
+    Ok(SslRecvResponse {
+        length: to_copy as u16,
+        data: buffer,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Plain TCP socket commands (AT+QIOPEN / QISEND / QIRD / QICLOSE)
+//
+// The non-TLS counterpart of the QSSL* family: they drive the modem's TCP/IP
+// stack in *buffer access mode* (<access_mode> = 0). Readable data is signalled
+// by the `+QIURC: "recv",<connectID>` URC and peer close by
+// `+QIURC: "closed",<connectID>`.
+// ---------------------------------------------------------------------------
+
+/// AT+QIOPEN Open a TCP (or UDP) socket.
+///
+/// `AT+QIOPEN=<ctxID>,<connectID>,<serviceType>,<host>,<port>,<localPort>,<accessMode>`
+///
+/// Responds with `OK`, then the actual result arrives asynchronously as the
+/// `+QIOPEN: <connectID>,<err>` URC.
+#[derive(Clone, AtatCmd)]
+#[at_cmd("+QIOPEN", NoResponse, timeout_ms = 500)]
+pub struct TcpOpen {
+    /// <ctxID> — PDP context id (the activated data context, usually 1).
+    #[at_arg(position = 1)]
+    pub ctx_id: u8,
+    /// <connectID> — socket identifier to allocate (0-11).
+    #[at_arg(position = 2)]
+    pub connect_id: u8,
+    /// <serviceType> — "TCP" or "UDP" (rendered quoted).
+    #[at_arg(position = 3)]
+    pub service_type: String<8>,
+    /// <host> — server hostname or IP (quoted).
+    #[at_arg(position = 4)]
+    pub host: String<128>,
+    /// <port> — remote port.
+    #[at_arg(position = 5)]
+    pub port: u16,
+    /// <localPort> — 0 lets the modem pick.
+    #[at_arg(position = 6)]
+    pub local_port: u16,
+    /// <accessMode> — 0: buffer access (use QIRD), 1: direct push, 2: transparent.
+    #[at_arg(position = 7)]
+    pub access_mode: u8,
+}
+
+/// AT+QISEND Send data on a TCP socket.
+///
+/// `AT+QISEND=<connectID>,<length>` — the modem replies with a `>` prompt, after
+/// which exactly `<length>` raw bytes are written (see [`SendRawContents`]) and
+/// the modem answers `SEND OK` / `SEND FAIL`.
+#[derive(Clone, AtatCmd)]
+#[at_cmd("+QISEND", NoResponse, timeout_ms = 1000)]
+pub struct TcpSend {
+    /// <connectID> — socket identifier.
+    #[at_arg(position = 1)]
+    pub connect_id: u8,
+    /// <length> — number of bytes that will follow the `>` prompt.
+    #[at_arg(position = 2)]
+    pub length: u16,
+}
+
+/// AT+QICLOSE Close a TCP socket.
+///
+/// `AT+QICLOSE=<connectID>,<timeout>`
+#[derive(Clone, AtatCmd)]
+#[at_cmd("+QICLOSE", NoResponse, timeout_ms = 10000)]
+pub struct TcpClose {
+    /// <connectID> — socket identifier.
+    #[at_arg(position = 1)]
+    pub connect_id: u8,
+    /// <timeout> — seconds to wait for graceful close.
+    #[at_arg(position = 2)]
+    pub timeout: u16,
+}
+
+/// AT+QIRD Read buffered data from a TCP socket.
+///
+/// `AT+QIRD=<connectID>,<length>` → `+QIRD: <actualLen>\r\n<binary>\r\nOK`.
+/// A custom parser (shared with [`SslRecv`], see [`parse_socket_recv`]) extracts
+/// `<actualLen>` and the following raw bytes.
+#[derive(Clone)]
+pub struct TcpRecv {
+    /// <connectID> — socket identifier.
+    pub connect_id: u8,
+    /// <length> — maximum number of bytes to read (capped at 512 by the buffer).
+    pub length: u16,
+}
+
+impl atat::AtatCmd for TcpRecv {
+    type Response = SslRecvResponse;
+    const MAX_LEN: usize = 32;
+
+    fn write(&self, buf: &mut [u8]) -> usize {
+        use core::fmt::Write as _;
+        use embedded_io::Write;
+
+        let original_len = buf.len();
+        let mut writer = buf;
+
+        let mut cmd = atat::heapless::String::<32>::new();
+        write!(cmd, "AT+QIRD={},{}\r", self.connect_id, self.length).unwrap();
+        writer.write(cmd.as_bytes()).unwrap();
+
+        original_len - writer.len()
+    }
+
+    fn parse(
+        &self,
+        resp: Result<&[u8], atat::InternalError>,
+    ) -> Result<Self::Response, atat::Error> {
+        parse_socket_recv(resp, b"+QIRD: ")
     }
 }
 

@@ -22,6 +22,11 @@ quectel-bg9x-eh-driver = { path = "../../", default-features = false, features =
 ] }
 static_cell = "2.1.0"
 critical-section = { version = "1.1.2", features = ["std"] }
+embedded-hal = "1.0.0"
+# Used by the `tcp_socket` example to demonstrate the embedded-nal blocking
+# `TcpClientStack` surface of the modem socket wrapper.
+embedded-nal = "0.9.0"
+nb = "1"
 embedded-io = { version = "0.6.1", features = ["std"] }
 embedded-io-adapters = { version = "0.6.1", features = ["std"] }
 embassy-time = { version = "0.4.0", features = ["std", "generic-queue-8"] }

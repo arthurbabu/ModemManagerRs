@@ -10,6 +10,13 @@ http_host = "www.google.com"
 http_port = 443
 http_path = "/"
 
+# ---------------------------------------------------------------------------
+# tcp_socket example (plain-TCP HTTP GET via the std socket wrapper)
+# ---------------------------------------------------------------------------
+tcp_host = "example.com"
+tcp_port = 80
+tcp_path = "/"
+
 # SSL context id (0-5) used for the HTTPS socket.
 ssl_context_id = 2
 

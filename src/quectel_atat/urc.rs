@@ -68,6 +68,16 @@ pub enum Urc {
     #[at_urc("+QSSLURC")]
     SslUrc(SslUrcResponse),
 
+    /// Plain-TCP socket open result URC
+    /// +QIOPEN: <connectID>,<err>
+    #[at_urc("+QIOPEN")]
+    TcpOpen(TcpOpenResponse),
+
+    /// Plain-TCP socket unsolicited event URC (data received or peer closed)
+    /// +QIURC: "<type>",<connectID>
+    #[at_urc("+QIURC")]
+    TcpUrc(TcpUrcResponse),
+
     /// Power Down URC
     /// +QPOWD: POWERED DOWN
     #[at_urc("POWERED DOWN")]

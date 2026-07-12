@@ -743,11 +743,12 @@ pub struct SslUrcResponse {
     pub client_id: u8,
 }
 
-/// Data returned by `AT+QSSLRECV` in buffer access mode.
+/// Data returned by `AT+QSSLRECV` / `AT+QIRD` in buffer access mode.
 ///
-/// Filled by a custom parser (see `SslRecv::parse`) from the
-/// `+QSSLRECV: <len>\r\n<binary>` response. `length` is the number of valid
-/// bytes in `data`; `0` means no data was currently buffered.
+/// Filled by a custom parser (see `parse_socket_recv`) from the
+/// `+QSSLRECV: <len>\r\n<binary>` (TLS) or `+QIRD: <len>\r\n<binary>` (plain
+/// TCP) response. `length` is the number of valid bytes in `data`; `0` means no
+/// data was currently buffered.
 #[derive(Clone, Debug, AtatResp)]
 pub struct SslRecvResponse {
     /// Number of valid bytes in `data`.
@@ -756,4 +757,34 @@ pub struct SslRecvResponse {
     /// The received bytes (up to the requested read length, max 512).
     #[at_arg(position = 2)]
     pub data: Bytes<512>,
+}
+
+/// `+QIOPEN: <connectID>,<err>` URC emitted after `AT+QIOPEN`.
+///
+/// `err == 0` means the TCP connection opened successfully; any other value is a
+/// Quectel error code (network/DNS/connection failure, etc.).
+#[derive(Clone, Debug, AtatResp)]
+pub struct TcpOpenResponse {
+    /// <connectID> — socket identifier (0-11).
+    #[at_arg(position = 1)]
+    pub connect_id: u8,
+    /// <err> — 0 on success, otherwise a Quectel error code.
+    #[at_arg(position = 2)]
+    pub err: i32,
+}
+
+/// `+QIURC: <type>,<connectID>` unsolicited plain-TCP socket event.
+///
+/// `type` is a quoted keyword: `"recv"` (data available to read) or `"closed"`
+/// (peer closed the connection). Other `+QIURC` forms (`"dnsgip"`, `"incoming"`,
+/// …) carry more fields and are not produced by the buffered client sockets this
+/// driver opens.
+#[derive(Clone, Debug, AtatResp)]
+pub struct TcpUrcResponse {
+    /// <type> — event keyword, e.g. "recv" or "closed".
+    #[at_arg(position = 1)]
+    pub urc_type: String<16>,
+    /// <connectID> — socket identifier the event refers to.
+    #[at_arg(position = 2)]
+    pub connect_id: u8,
 }

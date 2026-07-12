@@ -27,10 +27,35 @@ use thiserror::Error;
 pub mod cellular;
 pub mod quectel_atat;
 
-/// Async TCP+TLS sockets over the modem, via the `embedded-nal-async` traits.
+/// Which transport a modem-backed socket uses.
+///
+/// Passed to the socket wrappers ([`tcp`] under `embassy`, [`tcp_std`] under
+/// `std`) to select between the modem's plain-TCP and TLS engines per
+/// connection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Transport {
+    /// Plain TCP (`AT+QIOPEN` / `QISEND` / `QIRD` / `QICLOSE`).
+    Tcp,
+    /// Modem-terminated TLS on a pre-configured SSL context
+    /// (`AT+QSSLOPEN` / `QSSLSEND` / `QSSLRECV` / `QSSLCLOSE`). The context
+    /// `ssl_ctx_id` must already be set up via
+    /// [`cellular::QuectelBG9X::configure_ssl_context`].
+    Tls {
+        /// SSL context id (0-5) configured via `AT+QSSLCFG`.
+        ssl_ctx_id: u8,
+    },
+}
+
+/// Async TCP / TLS sockets over the modem, via the `embedded-nal-async` traits.
 /// Only available with the `embassy` feature.
 #[cfg(feature = "embassy")]
 pub mod tcp;
+
+/// Blocking TCP / TLS sockets over the modem, exposing `std::io` and
+/// `embedded-io` / `embedded-nal` (blocking) interfaces. Only available with the
+/// `std` feature.
+#[cfg(feature = "std")]
+pub mod tcp_std;
 
 #[derive(Debug, Error)]
 pub enum ModemError {

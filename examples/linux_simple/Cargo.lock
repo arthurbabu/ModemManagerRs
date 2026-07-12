@@ -395,6 +395,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-nal"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c56a28be191a992f28f178ec338a0bf02f63d7803244add736d026a471e6ed77"
+dependencies = [
+ "nb 1.1.0",
+]
+
+[[package]]
 name = "embedded-time"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -630,11 +639,14 @@ dependencies = [
  "atat",
  "critical-section",
  "embassy-time",
+ "embedded-hal 1.0.0",
  "embedded-hal-mock",
  "embedded-io",
  "embedded-io-adapters",
+ "embedded-nal",
  "env_logger",
  "log",
+ "nb 1.1.0",
  "quectel-bg9x-eh-driver",
  "serialport",
  "static_cell",
@@ -892,8 +904,10 @@ dependencies = [
  "chrono",
  "embedded-hal 1.0.0",
  "embedded-io",
+ "embedded-nal",
  "log",
  "maybe-async-cfg",
+ "nb 1.1.0",
  "static_cell",
  "thiserror",
  "time",

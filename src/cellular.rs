@@ -43,7 +43,7 @@ use embedded_io_async::Write;
 
 use atat::heapless::String as HeaplessString;
 use atat::heapless_bytes::Bytes as HeaplessBytes;
-use atat::UrcChannel;
+use atat::{UrcChannel, UrcSubscription};
 
 use crate::ModemError;
 
@@ -141,10 +141,47 @@ pub const URC_SUBSCRIBERS: usize = 3;
 ///     .with_custom_success(ssl_recv_digest_hook);
 /// let ingress = Ingress::new(digester, buf, &RES_SLOT, &URC_CHANNEL);
 /// ```
+///
+/// If you use both plain TCP (`AT+QIRD`) and TLS (`AT+QSSLRECV`) sockets, use
+/// [`socket_recv_digest_hook`] instead — it handles both frames.
 pub fn ssl_recv_digest_hook(buf: &[u8]) -> Result<(&[u8], usize), atat::digest::ParseError> {
-    use atat::digest::ParseError;
+    recv_digest_frame(buf, b"+QSSLRECV: ")
+}
 
-    const HDR: &[u8] = b"+QSSLRECV: ";
+/// Custom-success digester hook for the binary `+QIRD` (plain TCP) data frame.
+///
+/// The plain-TCP counterpart of [`ssl_recv_digest_hook`]; the `AT+QIRD` response
+/// is `+QIRD: <len>\r\n<len raw bytes>\r\n\r\nOK\r\n` and suffers the exact same
+/// mis-framing under atat's default digester. See [`ssl_recv_digest_hook`] for
+/// the full rationale.
+pub fn tcp_recv_digest_hook(buf: &[u8]) -> Result<(&[u8], usize), atat::digest::ParseError> {
+    recv_digest_frame(buf, b"+QIRD: ")
+}
+
+/// Combined custom-success digester hook for **both** `+QSSLRECV` (TLS) and
+/// `+QIRD` (plain TCP) binary data frames.
+///
+/// Use this when a single ingress carries both socket types. It tries the TLS
+/// frame first and falls back to the plain-TCP frame; any response that is
+/// neither defers to atat's default parsers.
+pub fn socket_recv_digest_hook(buf: &[u8]) -> Result<(&[u8], usize), atat::digest::ParseError> {
+    use atat::digest::ParseError;
+    match ssl_recv_digest_hook(buf) {
+        Err(ParseError::NoMatch) => tcp_recv_digest_hook(buf),
+        other => other,
+    }
+}
+
+/// Shared frame extractor for the length-prefixed socket read responses.
+///
+/// `header` selects the command family (`b"+QSSLRECV: "` or `b"+QIRD: "`). See
+/// [`ssl_recv_digest_hook`] for why this is needed and how it interacts with the
+/// digester's parser ordering.
+fn recv_digest_frame<'a>(
+    buf: &'a [u8],
+    header: &[u8],
+) -> Result<(&'a [u8], usize), atat::digest::ParseError> {
+    use atat::digest::ParseError;
 
     fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
         if needle.is_empty() || hay.len() < needle.len() {
@@ -153,12 +190,12 @@ pub fn ssl_recv_digest_hook(buf: &[u8]) -> Result<(&[u8], usize), atat::digest::
         hay.windows(needle.len()).position(|w| w == needle)
     }
 
-    // Locate the header. Note `+QSSLRECV: ` (colon + space) does not match the
-    // command echo `AT+QSSLRECV=…` (equals), so a stray echo is ignored. If the
-    // header is absent this is not a QSSLRECV data frame — defer to the default
-    // parsers.
-    let hdr = find(buf, HDR).ok_or(ParseError::NoMatch)?;
-    let after_hdr = &buf[hdr + HDR.len()..];
+    // Locate the header. Note the trailing colon+space does not match the
+    // command echo (`AT+QSSLRECV=…` / `AT+QIRD=…` use `=`), so a stray echo is
+    // ignored. If the header is absent this is not one of our data frames —
+    // defer to the default parsers.
+    let hdr = find(buf, header).ok_or(ParseError::NoMatch)?;
+    let after_hdr = &buf[hdr + header.len()..];
 
     // Decimal length runs up to the first CRLF. Header seen but length not yet
     // terminated => wait for more.
@@ -169,7 +206,7 @@ pub fn ssl_recv_digest_hook(buf: &[u8]) -> Result<(&[u8], usize), atat::digest::
         .ok_or(ParseError::NoMatch)?;
 
     // Payload starts right after that CRLF and is exactly `len` raw bytes.
-    let payload_start = hdr + HDR.len() + nl + 2;
+    let payload_start = hdr + header.len() + nl + 2;
     let payload_end = payload_start + len;
     if buf.len() < payload_end {
         return Err(ParseError::Incomplete);
@@ -180,7 +217,7 @@ pub fn ssl_recv_digest_hook(buf: &[u8]) -> Result<(&[u8], usize), atat::digest::
     let ok = find(&buf[payload_end..], b"OK\r\n").ok_or(ParseError::Incomplete)?;
     let consumed = payload_end + ok + b"OK\r\n".len();
 
-    // Hand `SslRecv::parse` the header + length + payload; it re-locates the
+    // Hand the command's `parse` the header + length + payload; it re-locates the
     // header itself, so a leading CRLF is harmless.
     Ok((&buf[hdr..payload_end], consumed))
 }
@@ -207,6 +244,15 @@ pub struct QuectelBG9X<W: Write, OutputPinGeneric: OutputPin> {
     mode: ModemMode,
     rev: ModemRevision,
     ssl_configured: bool,
+    /// Long-lived URC subscription for the currently-open socket.
+    ///
+    /// Created fresh when a socket is opened (`tcp_socket_open`/`ssl_socket_open`)
+    /// and drained by [`socket_poll_closed`](Self::socket_poll_closed) to detect
+    /// `+QIURC`/`+QSSLURC` `"recv"`/`"closed"` events. It must persist across
+    /// reads: an embassy `Subscriber` only observes URCs published after it
+    /// subscribes, so re-subscribing per poll would miss a `"closed"` that lands
+    /// between polls. Only one socket's events are tracked at a time.
+    socket_sub: Option<UrcSubscription<'static, Urc, URC_CAPACITY, URC_SUBSCRIBERS>>,
 }
 
 #[maybe_async_cfg::maybe(keep_self, sync(feature = "std"), async(feature = "embassy"))]
@@ -226,6 +272,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             mode: ModemMode::Unknown,
             rev: ModemRevision::Unknown,
             ssl_configured: false,
+            socket_sub: None,
         };
 
         driver.power_on().await?;
@@ -1602,7 +1649,14 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
     ) -> Result<(), ModemError> {
         info!("Opening SSL socket {} to {}:{}", client_id, host, port);
 
-        let mut subscriber = self.urc_channel.subscribe().unwrap();
+        // Subscribe *before* sending so the +QSSLOPEN URC can't be missed. This
+        // subscription is kept for the socket's lifetime so subsequent
+        // "recv"/"closed" URCs are seen too (see `socket_sub`).
+        self.socket_sub = Some(
+            self.urc_channel
+                .subscribe()
+                .map_err(|_| ModemError::NotResponding)?,
+        );
 
         match self
             .client
@@ -1628,16 +1682,17 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         let now = compat::Instant::now();
         while compat::elapsed_ms(now) < 30_000 {
             compat::delay_ms(200).await;
-            match subscriber.try_next_message_pure() {
-                Some(Urc::SslOpen(r)) if r.client_id == client_id => {
-                    if r.err == 0 {
-                        info!("SSL socket {} opened", client_id);
-                        return Ok(());
+            if let Some(sub) = self.socket_sub.as_mut() {
+                if let Some(Urc::SslOpen(r)) = sub.try_next_message_pure() {
+                    if r.client_id == client_id {
+                        if r.err == 0 {
+                            info!("SSL socket {} opened", client_id);
+                            return Ok(());
+                        }
+                        error!("QSSLOPEN failed for socket {}: err={}", client_id, r.err);
+                        return Err(ModemError::SocketOpenFailed);
                     }
-                    error!("QSSLOPEN failed for socket {}: err={}", client_id, r.err);
-                    return Err(ModemError::SocketOpenFailed);
                 }
-                _ => {}
             }
         }
 
@@ -1744,6 +1799,197 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 Err(ModemError::SocketCloseFailed)
             }
         }
+    }
+
+    /// Open a plain (non-TLS) TCP socket to `host:port`.
+    ///
+    /// A PDP context must be active ([`context_activate`](Self::context_activate)).
+    /// The socket is opened in buffer access mode: use
+    /// [`tcp_socket_recv`](Self::tcp_socket_recv) to read and
+    /// [`tcp_socket_send`](Self::tcp_socket_send) to write. This is the
+    /// counterpart of [`ssl_socket_open`](Self::ssl_socket_open) for connections
+    /// that do not need modem-terminated TLS.
+    pub async fn tcp_socket_open(
+        &mut self,
+        client_id: u8,
+        host: &str,
+        port: u16,
+    ) -> Result<(), ModemError> {
+        info!("Opening TCP socket {} to {}:{}", client_id, host, port);
+
+        let mut subscriber = self.urc_channel.subscribe().unwrap();
+
+        match self
+            .client
+            .send(&TcpOpen {
+                ctx_id: 1,
+                connect_id: client_id,
+                service_type: HeaplessString::try_from("TCP").unwrap(),
+                host: HeaplessString::try_from(host).map_err(|_| ModemError::NotSupported)?,
+                port,
+                local_port: 0,
+                access_mode: 0, // buffer access mode
+            })
+            .await
+        {
+            Ok(_) => {}
+            Err(e) => {
+                error!("QIOPEN command failed: {:?}", e);
+                return Err(ModemError::SocketOpenFailed);
+            }
+        }
+
+        // The connect result arrives as the +QIOPEN URC.
+        let now = compat::Instant::now();
+        while compat::elapsed_ms(now) < 30_000 {
+            compat::delay_ms(200).await;
+            match subscriber.try_next_message_pure() {
+                Some(Urc::TcpOpen(r)) if r.connect_id == client_id => {
+                    if r.err == 0 {
+                        info!("TCP socket {} opened", client_id);
+                        return Ok(());
+                    }
+                    error!("QIOPEN failed for socket {}: err={}", client_id, r.err);
+                    return Err(ModemError::SocketOpenFailed);
+                }
+                _ => {}
+            }
+        }
+
+        error!("Timed out waiting for QIOPEN result");
+        Err(ModemError::OperationTimeout)
+    }
+
+    /// Send `data` on an open plain-TCP socket.
+    ///
+    /// Data larger than one AT payload chunk (256 bytes) is split across multiple
+    /// `AT+QISEND` operations.
+    pub async fn tcp_socket_send(&mut self, client_id: u8, data: &[u8]) -> Result<(), ModemError> {
+        if data.is_empty() {
+            return Ok(());
+        }
+        if data.len() > u16::MAX as usize {
+            return Err(ModemError::NotSupported);
+        }
+
+        for chunk in data.chunks(256) {
+            // The `>` prompt after QISEND is not a regular AT response, so an
+            // error here is expected and ignored (same pattern as QSSLSEND).
+            let _ = self
+                .client
+                .send(&TcpSend {
+                    connect_id: client_id,
+                    length: chunk.len() as u16,
+                })
+                .await;
+
+            compat::delay_ms(100).await;
+
+            match self
+                .client
+                .send(&SendRawContents {
+                    bytes: HeaplessBytes::try_from(chunk).unwrap(),
+                })
+                .await
+            {
+                Ok(_) => {
+                    log::trace!("Sent {} bytes on TCP socket {}", chunk.len(), client_id);
+                }
+                Err(e) => {
+                    error!("QISEND payload failed on socket {}: {:?}", client_id, e);
+                    return Err(ModemError::SocketSendFailed);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Read currently-buffered data from an open plain-TCP socket into `buf`.
+    ///
+    /// Returns the number of bytes read, which is `0` when the modem has no data
+    /// buffered right now (callers typically wait for the
+    /// `+QIURC: "recv",<id>` URC and retry). At most 512 bytes are returned per
+    /// call regardless of `buf` length.
+    pub async fn tcp_socket_recv(
+        &mut self,
+        client_id: u8,
+        buf: &mut [u8],
+    ) -> Result<usize, ModemError> {
+        let want = core::cmp::min(buf.len(), 512);
+        if want == 0 {
+            return Ok(0);
+        }
+
+        match self
+            .client
+            .send(&TcpRecv {
+                connect_id: client_id,
+                length: want as u16,
+            })
+            .await
+        {
+            Ok(resp) => {
+                let n = core::cmp::min(resp.length as usize, resp.data.len());
+                let n = core::cmp::min(n, buf.len());
+                buf[..n].copy_from_slice(&resp.data[..n]);
+                Ok(n)
+            }
+            Err(e) => {
+                error!("QIRD failed on socket {}: {:?}", client_id, e);
+                Err(ModemError::SocketRecvFailed)
+            }
+        }
+    }
+
+    /// Close an open plain-TCP socket.
+    pub async fn tcp_socket_close(&mut self, client_id: u8) -> Result<(), ModemError> {
+        info!("Closing TCP socket {}", client_id);
+        match self
+            .client
+            .send(&TcpClose {
+                connect_id: client_id,
+                timeout: 10,
+            })
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                error!("QICLOSE failed on socket {}: {:?}", client_id, e);
+                Err(ModemError::SocketCloseFailed)
+            }
+        }
+    }
+
+    /// Non-blocking drain of the URC channel for a socket `"closed"` event.
+    ///
+    /// Returns `true` if a `+QIURC: "closed",<id>` (plain TCP) or
+    /// `+QSSLURC: "closed",<id>` (TLS) event for `client_id` is currently
+    /// queued. Used by the socket wrappers to surface peer-close as EOF.
+    ///
+    /// NOTE: this consumes URCs from a freshly-created subscriber, so it only
+    /// observes events that arrive while a subscriber exists. It is best-effort:
+    /// a `"closed"` event delivered between calls (with no subscriber alive) is
+    /// missed. The socket wrappers therefore also use an idle timeout as a
+    /// backstop.
+    pub async fn socket_poll_closed(&mut self, client_id: u8) -> bool {
+        let mut subscriber = match self.urc_channel.subscribe() {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        let mut closed = false;
+        while let Some(urc) = subscriber.try_next_message_pure() {
+            match urc {
+                Urc::TcpUrc(u) if u.connect_id == client_id && u.urc_type.contains("closed") => {
+                    closed = true;
+                }
+                Urc::SslUrc(u) if u.client_id == client_id && u.urc_type.contains("closed") => {
+                    closed = true;
+                }
+                _ => {}
+            }
+        }
+        closed
     }
 
     pub async fn configure_gnss_priority(&mut self) -> Result<(), ModemError> {
