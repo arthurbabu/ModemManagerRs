@@ -881,18 +881,24 @@ impl atat::AtatCmd for SslRecv {
             + header.len();
         let after_header = &data[start..];
 
-        // The decimal length runs up to the first CRLF.
-        let crlf = after_header
+        // The decimal length runs up to the first CRLF. If the CRLF is not
+        // present (the response was split across reads and only the header +
+        // length made it into this chunk, e.g. a bare "+QSSLRECV: 0"), treat the
+        // remainder as the length with an empty payload rather than failing —
+        // "0 bytes buffered" is a legitimate, common reply.
+        let (len_str, payload): (&[u8], &[u8]) = match after_header
             .windows(2)
             .position(|w| w == b"\r\n")
-            .ok_or(atat::Error::InvalidResponse)?;
-        let actual_len = core::str::from_utf8(&after_header[..crlf])
+        {
+            Some(crlf) => (&after_header[..crlf], &after_header[crlf + 2..]),
+            None => (after_header, &[]),
+        };
+        let actual_len = core::str::from_utf8(len_str)
             .map_err(|_| atat::Error::InvalidResponse)?
             .trim()
             .parse::<u16>()
             .map_err(|_| atat::Error::InvalidResponse)?;
 
-        let payload = &after_header[crlf + 2..];
         let to_copy = core::cmp::min(actual_len as usize, 512);
         let to_copy = core::cmp::min(to_copy, payload.len());
 

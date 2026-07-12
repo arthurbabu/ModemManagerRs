@@ -20,7 +20,7 @@
 use std::{env, thread, time};
 
 use quectel_bg9x_eh_driver::cellular::{
-    QuectelBG9X, INGRESS_BUF_SIZE, URC_CAPACITY, URC_SUBSCRIBERS,
+    ssl_recv_digest_hook, QuectelBG9X, INGRESS_BUF_SIZE, URC_CAPACITY, URC_SUBSCRIBERS,
 };
 use quectel_bg9x_eh_driver::quectel_atat::types::{
     AuthenticationMethod, ModemConfiguration, SslAuthenticationMode, SslConfiguration, SslVersion,
@@ -102,8 +102,13 @@ fn main() {
     static INGRESS_BUF: StaticCell<[u8; INGRESS_BUF_SIZE]> = StaticCell::new();
     static RES_SLOT: ResponseSlot<INGRESS_BUF_SIZE> = ResponseSlot::new();
     static URC_CHANNEL: UrcChannel<Urc, URC_CAPACITY, URC_SUBSCRIBERS> = UrcChannel::new();
+    // Use a custom-success digester hook so the binary `+QSSLRECV` data frame
+    // is framed by its length prefix instead of atat's line/prompt heuristics,
+    // which otherwise mis-parse binary payloads containing `>` / `\r\nOK\r\n`.
+    let digester =
+        DefaultDigester::<Urc>::default().with_custom_success(ssl_recv_digest_hook);
     let mut ingress = Ingress::new(
-        DefaultDigester::<Urc>::default(),
+        digester,
         INGRESS_BUF.init([0; INGRESS_BUF_SIZE]),
         &RES_SLOT,
         &URC_CHANNEL,
