@@ -1,0 +1,24 @@
+[package]
+name = "linux-simple"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+log = { version = "0.4.20" }
+env_logger = "0.11.3"
+serialport = "4.4.0"
+atat = { version = "0.24.1", features = [
+    "derive",
+    "bytes",
+    "hex_str_arrays",
+    "log",
+] }
+quectel-bg9x-eh-driver = { path = "../../" }
+static_cell = "2.1.0"
+critical-section = { version = "1.1.2", features = ["std"] }
+linux-embedded-hal = "0.4.0"
+embedded-io = { version = "0.6.1", features = ["std"] }
+embedded-io-adapters = { version = "0.6.1", features = ["std"] }
+embassy-time = { version = "0.4.0", features = ["std", "generic-queue-8"] }
+toml-cfg = "0.2.0"
+embedded-hal-mock = "0.11.1"

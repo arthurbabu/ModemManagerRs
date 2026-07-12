@@ -1,0 +1,50 @@
+[package]
+name = "quectel-bg9x-eh-driver"
+description = "Rust embedded-hal driver for the Quectel BG9X cellular modems"
+homepage = "https://gitlab.com/scrobotics/embedded-rs/quectel-atat-rs/"
+authors = ["Jorge Muñoz", "Xabier Crespo <x.crespo@scrobotics.es>"]
+license = "MIT"
+keywords = ["quectel", "bg95", "modem", "cellular"]
+categories = ["embedded"]
+version = "0.4.2"
+edition = "2021"
+
+[dependencies]
+log = { version = "0.4.19", default-features = false }
+atat = { version = "0.24.1", features = [
+    "derive",
+    "bytes",
+    "hex_str_arrays",
+    "log",
+] }
+static_cell = "2.1.0"
+thiserror = { version = "2.0.17", default-features = false }
+embedded-hal = "1.0.0"
+# `macros` gives us the compile-time `format_description!` so timestamp parsing
+# needs no allocator (works on `no_std` embassy targets without `alloc`).
+time = { version = "0.3.45", default-features = false, features = [
+    "parsing",
+    "macros",
+] }
+maybe-async-cfg = "0.2"
+
+# `std` runtime (blocking): uses the atat blocking client + std timing.
+embedded-io = "0.6.1"
+
+# `embassy` runtime (async): uses the atat async client + embassy-time.
+embassy-time = { version = "0.4", optional = true }
+embedded-io-async = { version = "0.6.1", optional = true }
+
+[features]
+# `std` is the default runtime so `cargo build` / `cargo test` work out of the box.
+default = ["bg95", "std"]
+
+# Chip selection (mutually exclusive band lists).
+bg95 = []
+bg96 = []
+
+# Runtime selection (mutually exclusive, enforced by a compile_error in lib.rs).
+# `std`     -> blocking driver, std::thread + std::time timing.
+# `embassy` -> async driver, embassy-time timing.
+std = []
+embassy = ["dep:embassy-time", "dep:embedded-io-async"]

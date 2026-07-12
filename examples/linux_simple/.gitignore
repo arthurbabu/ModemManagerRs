@@ -1,0 +1,2 @@
+cfg.toml*
+!cfg.toml.example

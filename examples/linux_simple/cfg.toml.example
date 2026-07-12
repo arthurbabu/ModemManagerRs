@@ -1,0 +1,54 @@
+[linux-simple]
+modem_apn = ""
+modem_user = ""
+modem_pass = ""
+
+mqtt_server = "test.mosquitto.org"
+mqtt_port = 1883
+
+# alternative server
+#mqtt_server = "broker.hivemq.com"
+#mqtt_port = 1883
+# TLS:
+#mqtt_port = 8883
+
+# Empty means "no user"
+mqtt_user = ""
+mqtt_pass = ""
+
+# SSL/TLS Configuration
+# Set to true to enable SSL/TLS for MQTT
+mqtt_use_ssl = false
+
+# SSL context ID (0-5, default: 2)
+mqtt_ssl_context_id = 2
+
+# Certificate filename (without UFS: prefix) - must be uploaded to modem first
+# Example: "cacert.pem"
+mqtt_ca_cert_filename = ""
+
+# SSL/TLS version: "tls10", "tls11", "tls12", "all" (default: "tls12")
+mqtt_ssl_version = "tls12"
+
+# Cipher suite: "all" for maximum compatibility, or specific hex value like:
+#   "0x0035" = TLS_RSA_WITH_AES_256_CBC_SHA
+#   "0x002F" = TLS_RSA_WITH_AES_128_CBC_SHA
+#   "0x003D" = TLS_RSA_WITH_AES_256_CBC_SHA256
+#   "0xC027" = TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256
+#   "0xC028" = TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384
+# (default: "all")
+mqtt_ssl_cipher_suite = "all"
+
+# Authentication mode: "none", "server", "mutual" (default: "server")
+mqtt_ssl_auth_mode = "server"
+
+# Enable Server Name Indication (default: true)
+mqtt_ssl_sni_enable = true
+
+# Enable hostname verification (default: false)
+# Note: Set to false to avoid hostname mismatch issues
+mqtt_ssl_checkhost_enable = false
+
+# Ignore local time validation (default: true)
+# Note: Set to true for easier testing without NTP sync
+mqtt_ssl_ignore_localtime = true
