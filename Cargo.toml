@@ -34,17 +34,31 @@ embedded-io = "0.6.1"
 # `embassy` runtime (async): uses the atat async client + embassy-time.
 embassy-time = { version = "0.4", optional = true }
 embedded-io-async = { version = "0.6.1", optional = true }
+# `embedded-nal-async` exposes the async TCP-socket traits the modem sockets
+# implement (async-only, hence embassy-gated).
+embedded-nal-async = { version = "0.8", optional = true }
+# `embassy-sync` provides the async Mutex used to share the modem between the
+# socket client and its open connections.
+embassy-sync = { version = "0.6", optional = true }
 
 [features]
 # `std` is the default runtime so `cargo build` / `cargo test` work out of the box.
 default = ["bg95", "std"]
 
-# Chip selection (mutually exclusive band lists).
+# Chip selection (mutually exclusive; enforced by a compile_error in lib.rs).
+# `bg95`/`bg96`  -> Cat-M / NB-IoT / GSM (band lists differ only).
+# `eg916u`       -> LTE Cat 1bis + GSM fallback.
 bg95 = []
 bg96 = []
+eg916u = []
 
 # Runtime selection (mutually exclusive, enforced by a compile_error in lib.rs).
 # `std`     -> blocking driver, std::thread + std::time timing.
 # `embassy` -> async driver, embassy-time timing.
 std = []
-embassy = ["dep:embassy-time", "dep:embedded-io-async"]
+embassy = [
+    "dep:embassy-time",
+    "dep:embedded-io-async",
+    "dep:embedded-nal-async",
+    "dep:embassy-sync",
+]

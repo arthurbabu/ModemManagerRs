@@ -58,6 +58,16 @@ pub enum Urc {
     #[at_urc("+QMTCLOSE")]
     MqttClose(MqttCloseResponse),
 
+    /// SSL socket open result URC
+    /// +QSSLOPEN: <clientID>,<err>
+    #[at_urc("+QSSLOPEN")]
+    SslOpen(SslOpenResponse),
+
+    /// SSL socket unsolicited event URC (e.g. data received or peer closed)
+    /// +QSSLURC: "<type>",<clientID>
+    #[at_urc("+QSSLURC")]
+    SslUrc(SslUrcResponse),
+
     /// Power Down URC
     /// +QPOWD: POWERED DOWN
     #[at_urc("POWERED DOWN")]

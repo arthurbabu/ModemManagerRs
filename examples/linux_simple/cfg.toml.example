@@ -3,6 +3,29 @@ modem_apn = ""
 modem_user = ""
 modem_pass = ""
 
+# ---------------------------------------------------------------------------
+# http_get_tls example (HTTPS GET with server authentication)
+# ---------------------------------------------------------------------------
+http_host = "www.google.com"
+http_port = 443
+http_path = "/"
+
+# SSL context id (0-5) used for the HTTPS socket.
+ssl_context_id = 2
+
+# Path to a LOCAL CA certificate (PEM) that signs the server's chain. It is
+# uploaded to the modem as cacert.pem and used for server authentication.
+# Leave empty to connect WITHOUT server verification (encrypted only).
+# For www.google.com use the Google Trust Services root (e.g. GTS Root R1),
+# available from https://pki.goog/repository/ .
+ca_cert_path = ""
+
+# Verify the certificate hostname matches http_host.
+ssl_checkhost = true
+
+# Ignore certificate validity dates (set true if the modem clock is unreliable).
+ssl_ignore_localtime = true
+
 mqtt_server = "test.mosquitto.org"
 mqtt_port = 1883
 

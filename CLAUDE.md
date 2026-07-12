@@ -20,9 +20,9 @@ cargo build --no-default-features --features "bg95 embassy" --target riscv32imac
 cargo build --no-default-features --features "bg96 embassy" --target riscv32imac-unknown-none-elf
 ```
 
-Two orthogonal, each-mutually-exclusive feature axes:
-- **Chip**: `bg95` (default) or `bg96` — only changes the compiled-in NB-IoT / eMTC band lists. Never enable both.
-- **Runtime**: `std` (default, blocking) or `embassy` (async, `no_std`). Enabling both or neither is a `compile_error!` (see [src/lib.rs](src/lib.rs)).
+Two orthogonal, each-mutually-exclusive feature axes (both enforced by `compile_error!` in [src/lib.rs](src/lib.rs) — exactly one of each):
+- **Chip**: `bg95` (default), `bg96`, or `eg916u`. bg95/bg96 are Cat-M/NB-IoT/GSM and differ only in band lists; `eg916u` is LTE Cat 1bis + GSM. EG916U band masks / RAT config in [src/quectel_atat/types.rs](src/quectel_atat/types.rs) are **provisional** (`TODO(eg916u)`) — not datasheet-verified.
+- **Runtime**: `std` (default, blocking) or `embassy` (async, `no_std`).
 
 ### Running the examples
 
@@ -59,6 +59,9 @@ Key behavioral points to preserve when editing:
 - **URC waits are still poll-based in both runtimes.** `subscriber.try_next_message_pure()` is non-async in `atat`; the loops poll it with a `compat::delay_ms(..).await` between tries. This is intentional (identical behavior in both backends), not an oversight.
 - **Firmware-revision branching.** `update_module_revision()` string-matches the `AT+QGMR` firmware version into `ModemRevision` (R200/R018/R014/R012/Unknown). Some commands behave differently per revision (e.g. `mqtt_disconnect` special-cases `R200`). When adding modem-behavior workarounds, gate them on `self.rev`.
 - **Construction runs I/O.** `QuectelBG9X::new()` immediately powers on the modem and queries revision + IMEI, returning `Err(ModemError::NotResponding)` if the modem is silent. Under `embassy` it is `async fn new(...).await`.
+
+### 3. TCP+TLS socket layer — `src/tcp.rs` (embassy-only)
+`#[cfg(feature = "embassy")]`. Wraps the driver's `ssl_socket_open`/`send`/`recv`/`close` methods (which use `AT+QSSLOPEN`/`QSSLSEND`/`QSSLRECV`/`QSSLCLOSE`, modem-terminated TLS) in the `embedded-nal-async` traits: `QuectelTcpClient` implements `TcpConnect`, and the returned `TlsSocket` implements `embedded_io_async::Read`/`Write`. Because `TcpConnect::connect` takes `&self` but AT I/O needs `&mut`, the modem is shared behind an `embassy_sync::mutex::Mutex` and locked per operation. mTLS credentials live in the modem's UFS flash (uploaded via `upload_file_to_internal_flash`, wired through `SslConfiguration::set_client_cert`/`set_client_key` → `configure_ssl_context`). Two known limitations, both flagged in-code: `TcpConnect::connect` only carries an IP (no hostname for SNI — use `ssl_socket_open` directly for that), and `TlsSocket::read` does not yet detect peer-close via `+QSSLURC: "closed"` (so a closed socket blocks instead of returning EOF).
 
 ### atat runtime wiring (see examples for the canonical setup)
 The caller, not the driver, owns the `atat` plumbing: an `Ingress` + `ResponseSlot` + `UrcChannel` (all `static`/`StaticCell` because they must be `'static`), a reader that feeds the serial RX into `ingress.write_buf()` and calls `ingress.try_advance()` (a background thread under `std`; an Embassy task calling `ingress.read_from(...).await` under `embassy`), and a `Client` built from the serial TX. The `UrcChannel` is passed by reference into the driver. Buffer sizes are the public consts `INGRESS_BUF_SIZE`, `URC_CAPACITY`, `URC_SUBSCRIBERS` in `src/cellular.rs`. The existing examples all use the `std` (blocking) backend; there is not yet an Embassy example.

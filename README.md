@@ -8,6 +8,9 @@ The main features are:
 * Connect to an MQTT broker and publish data (with optional SSL/TLS support)
 * Uses LTE-M with fallback to 2G
 * SSL/TLS configuration for secure MQTT connections
+* TCP+TLS sockets (including **mutual TLS**) exposed via the
+  [`embedded-nal-async`](https://docs.rs/embedded-nal-async) traits (async /
+  `embassy` only)
 
 The crate is available on [crates.io](https://crates.io/crates/quectel-bg9x-eh-driver).
 
@@ -15,10 +18,16 @@ The crate is available on [crates.io](https://crates.io/crates/quectel-bg9x-eh-d
 
 The crate has two independent axes of Cargo features.
 
-**Chip selection** (mutually exclusive band lists — the only difference between them):
+**Chip selection** (mutually exclusive — enable exactly one):
 
-* `bg95` *(default)*
-* `bg96`
+* `bg95` *(default)* — Cat-M / NB-IoT / GSM
+* `bg96` — Cat-M / NB-IoT / GSM
+* `eg916u` — LTE Cat 1bis + GSM fallback
+
+> **Note:** the EG916U band lists and RAT configuration are provisional and
+> marked with `TODO(eg916u)` in `src/quectel_atat/types.rs` — confirm them
+> against the EG916U datasheet before relying on `set_modem_configuration` for
+> that chip. The TCP/TLS socket support below is chip-independent.
 
 **Runtime selection** (mutually exclusive — enable exactly one):
 
@@ -46,8 +55,52 @@ quectel-bg9x-eh-driver = { version = "0.4", default-features = false, features =
 
 Building with both runtimes, or with neither, is a compile error.
 
+## TCP + mutual TLS sockets
+
+With the `embassy` feature the driver can open TCP+TLS sockets using the
+**modem's own** TLS engine (`AT+QSSLOPEN`/`QSSLSEND`/`QSSLRECV`/`QSSLCLOSE`) and
+expose them through the [`embedded-nal-async`](https://docs.rs/embedded-nal-async)
+`TcpConnect` trait. Because TLS is terminated on the modem, the CA certificate
+and — for mutual TLS — the client certificate and private key live in the
+modem's UFS flash (upload them with `upload_file_to_internal_flash`), not on the
+MCU.
+
+```rust,ignore
+// 1. Upload credentials to the modem flash (once).
+modem.upload_file_to_internal_flash("ca.pem", ca_bytes).await?;
+modem.upload_file_to_internal_flash("client.pem", client_cert_bytes).await?;
+modem.upload_file_to_internal_flash("client.key", client_key_bytes).await?;
+
+// 2. Configure an SSL context for mutual TLS.
+let mut ssl = SslConfiguration::new();
+ssl.set_context_id(2).unwrap();
+ssl.set_ca_cert("ca.pem").unwrap();
+ssl.set_client_cert("client.pem").unwrap();
+ssl.set_client_key("client.key").unwrap();
+ssl.set_auth_mode(SslAuthenticationMode::Mutual);
+modem.configure_ssl_context(ssl).await?;
+
+// 3a. Open a socket directly (hostname preserved for SNI):
+modem.ssl_socket_open(0, 2, "example.com", 8883).await?;
+modem.ssl_socket_send(0, b"hello").await?;
+let mut buf = [0u8; 256];
+let n = modem.ssl_socket_recv(0, &mut buf).await?;
+modem.ssl_socket_close(0).await?;
+
+// 3b. …or via embedded-nal-async (share the modem behind a Mutex):
+//     see `src/tcp.rs` (QuectelTcpClient / TlsSocket).
+```
+
+`QuectelTcpClient` (in `src/tcp.rs`) implements `embedded_nal_async::TcpConnect`;
+the returned `TlsSocket` implements `embedded_io_async::Read`/`Write`. Note that
+`TcpConnect::connect` only carries an IP address, so use `ssl_socket_open`
+directly when you need a hostname for SNI/hostname verification.
+
 ## TODO
 - [x] Remove STD dependencies (via the `embassy` feature; the driver core is now `no_std`)
+- [x] TCP+TLS sockets with mutual TLS via `embedded-nal-async` (`embassy` feature)
+- [ ] Confirm EG916U band lists / RAT config against the datasheet
+- [ ] Wire `+QSSLURC: "closed"` into `TlsSocket::read` for EOF detection
 - [ ] Make modem user configurable (AT+QCFG commands)
 - [ ] Add an Embassy (async) example
 

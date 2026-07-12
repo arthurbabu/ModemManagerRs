@@ -760,6 +760,146 @@ pub struct ConfigureSslCheckHost {
     pub checkhost_enable: SslCheckHostEnable,
 }
 
+// ---------------------------------------------------------------------------
+// TCP / SSL socket commands (AT+QSSLOPEN / QSSLSEND / QSSLRECV / QSSLCLOSE)
+//
+// These drive the modem's own TCP+TLS engine in *buffer access mode*
+// (<access_mode> = 0): the MCU pushes/pulls payload with QSSLSEND/QSSLRECV and
+// is notified of readable data via the `+QSSLURC: "recv",<id>` URC. mTLS is
+// configured beforehand through the `AT+QSSLCFG` commands above.
+// ---------------------------------------------------------------------------
+
+/// AT+QSSLOPEN Open an SSL socket.
+///
+/// `AT+QSSLOPEN=<pdpCtxID>,<sslCtxID>,<clientID>,<host>,<port>,<accessMode>`
+///
+/// Responds with `OK`, then the actual result arrives asynchronously as the
+/// `+QSSLOPEN: <clientID>,<err>` URC (handshake can take several seconds).
+#[derive(Clone, AtatCmd)]
+#[at_cmd("+QSSLOPEN", NoResponse, timeout_ms = 500)]
+pub struct SslOpen {
+    /// <pdpCtxID> — PDP context id (the activated data context, usually 1).
+    #[at_arg(position = 1)]
+    pub pdp_ctx_id: u8,
+    /// <sslCtxID> — SSL context id configured via AT+QSSLCFG (0-5).
+    #[at_arg(position = 2)]
+    pub ssl_ctx_id: u8,
+    /// <clientID> — socket identifier to allocate (0-11).
+    #[at_arg(position = 3)]
+    pub client_id: u8,
+    /// <host> — server hostname or IP (quoted). Used for SNI when enabled.
+    #[at_arg(position = 4)]
+    pub host: String<128>,
+    /// <port> — server port.
+    #[at_arg(position = 5)]
+    pub port: u16,
+    /// <accessMode> — 0: buffer access (use QSSLRECV), 1: direct push, 2: transparent.
+    #[at_arg(position = 6)]
+    pub access_mode: u8,
+}
+
+/// AT+QSSLSEND Send data on an SSL socket.
+///
+/// `AT+QSSLSEND=<clientID>,<length>` — the modem replies with a `>` prompt,
+/// after which exactly `<length>` raw bytes are written (see
+/// [`SendRawContents`]) and the modem answers `SEND OK` / `SEND FAIL`.
+#[derive(Clone, AtatCmd)]
+#[at_cmd("+QSSLSEND", NoResponse, timeout_ms = 1000)]
+pub struct SslSend {
+    /// <clientID> — socket identifier.
+    #[at_arg(position = 1)]
+    pub client_id: u8,
+    /// <length> — number of bytes that will follow the `>` prompt.
+    #[at_arg(position = 2)]
+    pub length: u16,
+}
+
+/// AT+QSSLCLOSE Close an SSL socket.
+///
+/// `AT+QSSLCLOSE=<clientID>,<timeout>`
+#[derive(Clone, AtatCmd)]
+#[at_cmd("+QSSLCLOSE", NoResponse, timeout_ms = 10000)]
+pub struct SslClose {
+    /// <clientID> — socket identifier.
+    #[at_arg(position = 1)]
+    pub client_id: u8,
+    /// <timeout> — seconds to wait for graceful close.
+    #[at_arg(position = 2)]
+    pub timeout: u16,
+}
+
+/// AT+QSSLRECV Read buffered data from an SSL socket.
+///
+/// `AT+QSSLRECV=<clientID>,<length>` → `+QSSLRECV: <actualLen>\r\n<binary>\r\nOK`.
+/// A custom parser extracts `<actualLen>` and the following raw bytes.
+#[derive(Clone)]
+pub struct SslRecv {
+    /// <clientID> — socket identifier.
+    pub client_id: u8,
+    /// <length> — maximum number of bytes to read (capped at 512 by the buffer).
+    pub length: u16,
+}
+
+impl atat::AtatCmd for SslRecv {
+    type Response = SslRecvResponse;
+    const MAX_LEN: usize = 32;
+
+    fn write(&self, buf: &mut [u8]) -> usize {
+        use core::fmt::Write as _;
+        use embedded_io::Write;
+
+        let original_len = buf.len();
+        let mut writer = buf;
+
+        let mut cmd = atat::heapless::String::<32>::new();
+        write!(cmd, "AT+QSSLRECV={},{}\r", self.client_id, self.length).unwrap();
+        writer.write(cmd.as_bytes()).unwrap();
+
+        original_len - writer.len()
+    }
+
+    fn parse(
+        &self,
+        resp: Result<&[u8], atat::InternalError>,
+    ) -> Result<Self::Response, atat::Error> {
+        let data = resp.map_err(atat::Error::from)?;
+
+        // Locate the "+QSSLRECV: " header.
+        let header = b"+QSSLRECV: ";
+        let start = data
+            .windows(header.len())
+            .position(|w| w == header)
+            .ok_or(atat::Error::InvalidResponse)?
+            + header.len();
+        let after_header = &data[start..];
+
+        // The decimal length runs up to the first CRLF.
+        let crlf = after_header
+            .windows(2)
+            .position(|w| w == b"\r\n")
+            .ok_or(atat::Error::InvalidResponse)?;
+        let actual_len = core::str::from_utf8(&after_header[..crlf])
+            .map_err(|_| atat::Error::InvalidResponse)?
+            .trim()
+            .parse::<u16>()
+            .map_err(|_| atat::Error::InvalidResponse)?;
+
+        let payload = &after_header[crlf + 2..];
+        let to_copy = core::cmp::min(actual_len as usize, 512);
+        let to_copy = core::cmp::min(to_copy, payload.len());
+
+        let mut buffer = Bytes::<512>::new();
+        buffer
+            .extend_from_slice(&payload[..to_copy])
+            .map_err(|_| atat::Error::InvalidResponse)?;
+
+        Ok(SslRecvResponse {
+            length: to_copy as u16,
+            data: buffer,
+        })
+    }
+}
+
 /// AT+QFUPL
 ///
 /// Upload a file to internal flash. Uses UFS (User File Storage) by default.

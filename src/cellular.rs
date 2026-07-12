@@ -1323,6 +1323,174 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         Ok(())
     }
 
+    /// Open a TCP+TLS socket to `host:port` using SSL context `ssl_ctx_id`.
+    ///
+    /// The SSL context (CA cert, and for mTLS the client cert + key) must have
+    /// been configured first with [`configure_ssl_context`](Self::configure_ssl_context),
+    /// and a PDP context must be active ([`context_activate`](Self::context_activate)).
+    /// The socket is opened in buffer access mode: use
+    /// [`ssl_socket_recv`](Self::ssl_socket_recv) to read and
+    /// [`ssl_socket_send`](Self::ssl_socket_send) to write.
+    ///
+    /// `host` is passed to the modem verbatim, so it is used for SNI / hostname
+    /// verification when those are enabled on the SSL context.
+    pub async fn ssl_socket_open(
+        &mut self,
+        client_id: u8,
+        ssl_ctx_id: u8,
+        host: &str,
+        port: u16,
+    ) -> Result<(), ModemError> {
+        info!("Opening SSL socket {} to {}:{}", client_id, host, port);
+
+        let mut subscriber = self.urc_channel.subscribe().unwrap();
+
+        match self
+            .client
+            .send(&SslOpen {
+                pdp_ctx_id: 1,
+                ssl_ctx_id,
+                client_id,
+                host: HeaplessString::try_from(host).map_err(|_| ModemError::NotSupported)?,
+                port,
+                access_mode: 0, // buffer access mode
+            })
+            .await
+        {
+            Ok(_) => {}
+            Err(e) => {
+                error!("QSSLOPEN command failed: {:?}", e);
+                return Err(ModemError::SocketOpenFailed);
+            }
+        }
+
+        // The TLS handshake result arrives as the +QSSLOPEN URC (can take a
+        // while, especially for mTLS).
+        let now = compat::Instant::now();
+        while compat::elapsed_ms(now) < 30_000 {
+            compat::delay_ms(200).await;
+            match subscriber.try_next_message_pure() {
+                Some(Urc::SslOpen(r)) if r.client_id == client_id => {
+                    if r.err == 0 {
+                        info!("SSL socket {} opened", client_id);
+                        return Ok(());
+                    }
+                    error!("QSSLOPEN failed for socket {}: err={}", client_id, r.err);
+                    return Err(ModemError::SocketOpenFailed);
+                }
+                _ => {}
+            }
+        }
+
+        error!("Timed out waiting for QSSLOPEN result");
+        Err(ModemError::OperationTimeout)
+    }
+
+    /// Send `data` on an open SSL socket.
+    ///
+    /// Data larger than one AT payload chunk (256 bytes) is split across
+    /// multiple `AT+QSSLSEND` operations.
+    pub async fn ssl_socket_send(
+        &mut self,
+        client_id: u8,
+        data: &[u8],
+    ) -> Result<(), ModemError> {
+        if data.is_empty() {
+            return Ok(());
+        }
+        if data.len() > u16::MAX as usize {
+            return Err(ModemError::NotSupported);
+        }
+
+        for chunk in data.chunks(256) {
+            // The `>` prompt after QSSLSEND is not a regular AT response, so an
+            // error here is expected and ignored (same pattern as file upload).
+            let _ = self
+                .client
+                .send(&SslSend {
+                    client_id,
+                    length: chunk.len() as u16,
+                })
+                .await;
+
+            compat::delay_ms(100).await;
+
+            match self
+                .client
+                .send(&SendRawContents {
+                    bytes: HeaplessBytes::try_from(chunk).unwrap(),
+                })
+                .await
+            {
+                Ok(_) => {
+                    log::trace!("Sent {} bytes on socket {}", chunk.len(), client_id);
+                }
+                Err(e) => {
+                    error!("QSSLSEND payload failed on socket {}: {:?}", client_id, e);
+                    return Err(ModemError::SocketSendFailed);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Read currently-buffered data from an open SSL socket into `buf`.
+    ///
+    /// Returns the number of bytes read, which is `0` when the modem has no
+    /// data buffered right now (callers typically wait for the
+    /// `+QSSLURC: "recv",<id>` URC and retry). At most 512 bytes are returned
+    /// per call regardless of `buf` length.
+    pub async fn ssl_socket_recv(
+        &mut self,
+        client_id: u8,
+        buf: &mut [u8],
+    ) -> Result<usize, ModemError> {
+        let want = core::cmp::min(buf.len(), 512);
+        if want == 0 {
+            return Ok(0);
+        }
+
+        match self
+            .client
+            .send(&SslRecv {
+                client_id,
+                length: want as u16,
+            })
+            .await
+        {
+            Ok(resp) => {
+                let n = core::cmp::min(resp.length as usize, resp.data.len());
+                let n = core::cmp::min(n, buf.len());
+                buf[..n].copy_from_slice(&resp.data[..n]);
+                Ok(n)
+            }
+            Err(e) => {
+                error!("QSSLRECV failed on socket {}: {:?}", client_id, e);
+                Err(ModemError::SocketRecvFailed)
+            }
+        }
+    }
+
+    /// Close an open SSL socket.
+    pub async fn ssl_socket_close(&mut self, client_id: u8) -> Result<(), ModemError> {
+        info!("Closing SSL socket {}", client_id);
+        match self
+            .client
+            .send(&SslClose {
+                client_id,
+                timeout: 10,
+            })
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                error!("QSSLCLOSE failed on socket {}: {:?}", client_id, e);
+                Err(ModemError::SocketCloseFailed)
+            }
+        }
+    }
+
     pub async fn configure_gnss_priority(&mut self) -> Result<(), ModemError> {
         match self.client.send(&ConfigureGnssPriorityMode).await {
             Ok(_) => {}
@@ -1452,6 +1620,8 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
     ) -> Result<(), ModemError> {
         let context_id = ssl_config.get_context_id();
         let ca_cert_filename = ssl_config.get_ca_cert_filename();
+        let client_cert_filename = ssl_config.get_client_cert_filename();
+        let client_key_filename = ssl_config.get_client_key_filename();
         let ssl_version = ssl_config.get_ssl_version();
         let cipher_suite = ssl_config.get_cipher_suite();
         let security_level = ssl_config.get_auth_mode();
@@ -1500,6 +1670,56 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 }
                 Err(e) => {
                     error!("Failed to configure CA certificate: {:?}", e);
+                    return Err(ModemError::NotResponding);
+                }
+            }
+        }
+
+        // Configure the client certificate + private key for mutual TLS.
+        // Both must be present; a client cert without its key (or vice versa) is
+        // a misconfiguration.
+        if !client_cert_filename.is_empty() || !client_key_filename.is_empty() {
+            if client_cert_filename.is_empty() || client_key_filename.is_empty() {
+                error!("mTLS requires both a client certificate and a client key");
+                return Err(ModemError::SslCertificateInvalid);
+            }
+
+            // Validate both files exist in UFS before referencing them.
+            for file in [client_cert_filename, client_key_filename] {
+                if self.get_file_meta_from_internal_flash(file).await.is_err() {
+                    error!("Client credential not found: {}", file);
+                    return Err(ModemError::SslCertificateNotFound);
+                }
+            }
+
+            match self
+                .client
+                .send(&ConfigureSslClientCertificate {
+                    subcommand: HeaplessString::try_from("clientcert").unwrap(),
+                    context_id,
+                    client_cert_path: HeaplessString::try_from(client_cert_filename).unwrap(),
+                })
+                .await
+            {
+                Ok(_) => debug!("Client certificate configured"),
+                Err(e) => {
+                    error!("Failed to configure client certificate: {:?}", e);
+                    return Err(ModemError::NotResponding);
+                }
+            }
+
+            match self
+                .client
+                .send(&ConfigureSslClientPrivateKey {
+                    subcommand: HeaplessString::try_from("clientkey").unwrap(),
+                    context_id,
+                    client_key_path: HeaplessString::try_from(client_key_filename).unwrap(),
+                })
+                .await
+            {
+                Ok(_) => debug!("Client private key configured"),
+                Err(e) => {
+                    error!("Failed to configure client private key: {:?}", e);
                     return Err(ModemError::NotResponding);
                 }
             }

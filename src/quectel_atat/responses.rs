@@ -646,3 +646,50 @@ pub struct GnssGgaNmeaSentenceResponse {
     #[at_arg(position = 15)]
     _checksum: Option<Bytes<3>>,
 }
+
+// ---------------------------------------------------------------------------
+// TCP / SSL socket responses (AT+QSSLOPEN / QSSLRECV / QSSLURC)
+// ---------------------------------------------------------------------------
+
+/// `+QSSLOPEN: <clientID>,<err>` URC emitted after `AT+QSSLOPEN`.
+///
+/// `err == 0` means the (TLS) connection opened successfully; any other value
+/// is a Quectel error code (network/DNS/TLS handshake failure, etc.).
+#[derive(Clone, Debug, AtatResp)]
+pub struct SslOpenResponse {
+    /// <clientID> — socket identifier (0-11).
+    #[at_arg(position = 1)]
+    pub client_id: u8,
+    /// <err> — 0 on success, otherwise a Quectel error code.
+    #[at_arg(position = 2)]
+    pub err: i32,
+}
+
+/// `+QSSLURC: <type>,<clientID>` unsolicited socket event.
+///
+/// `type` is a quoted keyword: `"recv"` (data available to read),
+/// `"closed"` (peer closed the connection), etc.
+#[derive(Clone, Debug, AtatResp)]
+pub struct SslUrcResponse {
+    /// <type> — event keyword, e.g. "recv" or "closed".
+    #[at_arg(position = 1)]
+    pub urc_type: String<16>,
+    /// <clientID> — socket identifier the event refers to.
+    #[at_arg(position = 2)]
+    pub client_id: u8,
+}
+
+/// Data returned by `AT+QSSLRECV` in buffer access mode.
+///
+/// Filled by a custom parser (see `SslRecv::parse`) from the
+/// `+QSSLRECV: <len>\r\n<binary>` response. `length` is the number of valid
+/// bytes in `data`; `0` means no data was currently buffered.
+#[derive(Clone, Debug, AtatResp)]
+pub struct SslRecvResponse {
+    /// Number of valid bytes in `data`.
+    #[at_arg(position = 1)]
+    pub length: u16,
+    /// The received bytes (up to the requested read length, max 512).
+    #[at_arg(position = 2)]
+    pub data: Bytes<512>,
+}

@@ -242,6 +242,12 @@ impl Band for EmtcBands {
         return 0xB0E189F;
         #[cfg(feature = "bg95")]
         return 0x100182000000004F0E189F;
+        // TODO(eg916u): confirm the LTE Cat 1bis band mask against the EG916U
+        // datasheet. EG916U is not a Cat-M part; this reuses the EMTC field of
+        // AT+QCFG="band" to carry the LTE band mask. Provisional value covers
+        // common EU LTE-FDD bands 1/3/5/8/20/28.
+        #[cfg(feature = "eg916u")]
+        return 0x800800B5;
     }
     fn as_u8(self) -> u8 {
         self as u8
@@ -259,6 +265,11 @@ impl Band for NbIotBands {
         return 0xB0E189F;
         #[cfg(feature = "bg95")]
         return 0x1001C200000000490E189F;
+        // TODO(eg916u): EG916U (Cat 1bis) has no NB-IoT RAT. Left at 0 until the
+        // EG916U band configuration is confirmed; selecting NB-IoT `Any` on this
+        // chip therefore requests no bands.
+        #[cfg(feature = "eg916u")]
+        return 0x0;
     }
     fn as_u8(self) -> u8 {
         self as u8
@@ -537,6 +548,10 @@ impl SslCipherSuiteEnum {
 pub struct SslConfiguration {
     context_id: u8,
     ca_cert_filename: String<80>,
+    /// Client certificate file (UFS) for mutual TLS. Empty when unused.
+    client_cert_filename: String<80>,
+    /// Client private key file (UFS) for mutual TLS. Empty when unused.
+    client_key_filename: String<80>,
     ssl_version: SslVersion,
     cipher_suite: Option<SslCipherSuites>,
     auth_mode: SslAuthenticationMode,
@@ -561,6 +576,8 @@ impl SslConfiguration {
         Self {
             context_id: 2,
             ca_cert_filename: String::new(),
+            client_cert_filename: String::new(),
+            client_key_filename: String::new(),
             ssl_version: SslVersion::Tls1_2,
             cipher_suite: None, // Will default to SupportAll in configure_ssl_context
             auth_mode: SslAuthenticationMode::ServerOnly,
@@ -600,6 +617,33 @@ impl SslConfiguration {
     /// * `Err(())` - If filename is too long
     pub fn set_ca_cert(&mut self, filename: &str) -> Result<&mut Self, ()> {
         self.ca_cert_filename = String::try_from(filename).map_err(|_| ())?;
+        Ok(self)
+    }
+
+    /// Set the client certificate filename (UFS) for **mutual TLS**.
+    ///
+    /// For mTLS you must also call [`set_client_key`](Self::set_client_key) and
+    /// [`set_auth_mode`](Self::set_auth_mode) with
+    /// [`SslAuthenticationMode::Mutual`], and upload both files to the modem
+    /// flash first.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(&mut Self)` - For method chaining
+    /// * `Err(())` - If filename is too long
+    pub fn set_client_cert(&mut self, filename: &str) -> Result<&mut Self, ()> {
+        self.client_cert_filename = String::try_from(filename).map_err(|_| ())?;
+        Ok(self)
+    }
+
+    /// Set the client private key filename (UFS) for **mutual TLS**.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(&mut Self)` - For method chaining
+    /// * `Err(())` - If filename is too long
+    pub fn set_client_key(&mut self, filename: &str) -> Result<&mut Self, ()> {
+        self.client_key_filename = String::try_from(filename).map_err(|_| ())?;
         Ok(self)
     }
 
@@ -677,6 +721,16 @@ impl SslConfiguration {
     /// Get the CA certificate filename.
     pub fn get_ca_cert_filename(&self) -> &str {
         self.ca_cert_filename.as_str()
+    }
+
+    /// Get the client certificate filename (empty if mTLS is not configured).
+    pub fn get_client_cert_filename(&self) -> &str {
+        self.client_cert_filename.as_str()
+    }
+
+    /// Get the client private key filename (empty if mTLS is not configured).
+    pub fn get_client_key_filename(&self) -> &str {
+        self.client_key_filename.as_str()
     }
 
     /// Get the SSL version.

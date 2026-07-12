@@ -166,6 +166,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-nal"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c56a28be191a992f28f178ec338a0bf02f63d7803244add736d026a471e6ed77"
+dependencies = [
+ "nb 1.1.0",
+]
+
+[[package]]
+name = "embedded-nal-async"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76959917cd2b86f40a98c28dd5624eddd1fa69d746241c8257eac428d83cb211"
+dependencies = [
+ "embedded-io-async",
+ "embedded-nal",
+]
+
+[[package]]
 name = "futures"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -410,10 +429,12 @@ name = "quectel-bg9x-eh-driver"
 version = "0.4.2"
 dependencies = [
  "atat",
+ "embassy-sync",
  "embassy-time",
  "embedded-hal 1.0.0",
  "embedded-io",
  "embedded-io-async",
+ "embedded-nal-async",
  "log",
  "maybe-async-cfg",
  "static_cell",
