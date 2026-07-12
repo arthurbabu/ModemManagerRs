@@ -28,6 +28,9 @@ time = { version = "0.3.45", default-features = false, features = [
     "macros",
 ] }
 maybe-async-cfg = "0.2"
+# `chrono` (no_std, no allocator) is used to expose network time as a
+# `DateTime<Utc>`; only `DateTime::from_timestamp` / `Utc` are needed.
+chrono = { version = "0.4.38", default-features = false }
 
 # `std` runtime (blocking): uses the atat blocking client + std timing.
 embedded-io = "0.6.1"

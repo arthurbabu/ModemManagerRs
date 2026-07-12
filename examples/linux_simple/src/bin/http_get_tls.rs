@@ -184,11 +184,24 @@ fn main() {
     log::info!("Signal quality: {}%", signalq);
 
     mm.context_activate().unwrap();
-    // Sync the clock so the modem can check the server certificate validity dates.
+
+        loop {
+                // Sync the clock so the modem can check the server certificate validity dates.
     match mm.get_ntp_time("0.pool.ntp.org") {
         Ok(ts) => log::info!("NTP time: {}", ts),
         Err(e) => log::warn!("NTP sync failed ({:?}); relying on ignore_localtime", e),
     }
+        thread::sleep(time::Duration::from_secs(1));
+    }
+
+    /*
+    let now = mm.get_ntp_datetime("0.pool.ntp.org").await;
+    log::info!("UTC now: {}", now);
+
+        loop {
+        thread::sleep(time::Duration::from_secs(1));
+    }
+    */
 
     // ---- TLS server-authentication configuration ----------------------------
     let mut ssl = SslConfiguration::new();

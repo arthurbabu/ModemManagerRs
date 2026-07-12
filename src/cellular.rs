@@ -787,6 +787,24 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         Err(ModemError::NotResponding)
     }
 
+    /// Synchronise the clock over NTP and return it as a [`chrono::DateTime<Utc>`].
+    ///
+    /// Convenience wrapper over [`get_ntp_time`](Self::get_ntp_time): it issues
+    /// the same `AT+QNTP` request (a PDP context must be active) and converts the
+    /// resulting Unix timestamp into a `chrono` UTC datetime.
+    ///
+    /// ```ignore
+    /// let now = mm.get_ntp_datetime("0.pool.ntp.org").await?;
+    /// log::info!("UTC now: {}", now); // e.g. 2026-07-12 13:43:47 UTC
+    /// ```
+    pub async fn get_ntp_datetime(
+        &mut self,
+        ntp_server: &str,
+    ) -> Result<chrono::DateTime<chrono::Utc>, ModemError> {
+        let ts = self.get_ntp_time(ntp_server).await?;
+        chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0).ok_or(ModemError::NtpRequestFailed)
+    }
+
     pub async fn get_signal_strength(&mut self) -> Result<(i16, u8), ModemError> {
         match self.client.send(&GetSignalStrength).await {
             Ok(signal_strength) => {
