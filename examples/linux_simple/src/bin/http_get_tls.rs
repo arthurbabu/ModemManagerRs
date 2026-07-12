@@ -23,8 +23,7 @@ use quectel_bg9x_eh_driver::cellular::{
     QuectelBG9X, INGRESS_BUF_SIZE, URC_CAPACITY, URC_SUBSCRIBERS,
 };
 use quectel_bg9x_eh_driver::quectel_atat::types::{
-    AuthenticationMethod, EmtcBands, GsmBands, ModemConfiguration, NbIotBands,
-    RadioAccessTechnology, SslAuthenticationMode, SslConfiguration, SslVersion,
+    AuthenticationMethod, ModemConfiguration, SslAuthenticationMode, SslConfiguration, SslVersion,
 };
 use quectel_bg9x_eh_driver::quectel_atat::urc::Urc;
 
@@ -147,32 +146,15 @@ fn main() {
         }
     };
 
-    // Radio configuration: European bands, LTE-M with 2G fallback.
-    let mut mm_config = ModemConfiguration::new();
-    mm_config
-        .set_bands(
-            RadioAccessTechnology::GSM,
-            &[GsmBands::Gsm900MHz, GsmBands::Gsm1800MHz],
-        )
-        .unwrap();
-    mm_config
-        .set_bands(
-            RadioAccessTechnology::EMTC,
-            &[EmtcBands::Band3, EmtcBands::Band8, EmtcBands::Band20],
-        )
-        .unwrap();
-    mm_config
-        .set_bands(
-            RadioAccessTechnology::NbIoT,
-            &[NbIotBands::Band3, NbIotBands::Band8, NbIotBands::Band20],
-        )
-        .unwrap();
-    mm_config
-        .set_rat_order(&[RadioAccessTechnology::EMTC, RadioAccessTechnology::GSM])
-        .unwrap();
+    // The EG916U (Cat 1bis) uses automatic band / RAT selection:
+    // `set_modem_configuration` ignores the per-RAT band masks on this chip, so
+    // a default configuration is sufficient. (For BG95/BG96 you would narrow the
+    // GSM/eMTC/NB-IoT bands and RAT search order here.)
+    let mm_config = ModemConfiguration::new();
 
     mm.is_alive().unwrap();
     std::thread::sleep(std::time::Duration::from_millis(200));
+    mm.set_modem_funcionality(true).unwrap();
     mm.test_sim().unwrap_or_else(|_| {
         log::error!("SIM test failed, stopping execution.");
         let _ = mm.power_off();
@@ -181,7 +163,6 @@ fn main() {
         }
     });
 
-    mm.set_modem_funcionality(false).unwrap();
     mm.set_modem_configuration(mm_config).unwrap();
     mm.set_context_configuration(
         CONFIG.modem_apn,
@@ -191,7 +172,7 @@ fn main() {
             .unwrap_or(AuthenticationMethod::None),
     )
     .unwrap();
-    mm.set_modem_funcionality(true).unwrap();
+    // mm.set_modem_funcionality(true).unwrap();
 
     mm.network_attach().unwrap();
     let (_, signalq) = mm.get_signal_strength().unwrap();

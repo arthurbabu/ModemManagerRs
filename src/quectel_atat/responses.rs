@@ -85,6 +85,70 @@ pub struct NetworkInfo {
     pub channel: Option<u32>,
 }
 
+/// Serving Cell Information for LTE
+/// Response format: +QENG: "servingcell",<state>,"LTE",<is_tdd>,<mcc>,<mnc>,<cellid>,<pcid>,<earfcn>,<freq_band_ind>,<ul_bw>,<dl_bw>,<tac>,<rsrp>,<rsrq>,<rssi>,<sinr>,<srxlev>
+#[derive(Clone, Debug, AtatResp)]
+pub struct ServingCellInfo {
+    #[at_arg(position = 0)]
+    pub tag: String<16>, // "servingcell"
+    #[at_arg(position = 1)]
+    pub state: String<16>, // "SEARCH", "LIMSRV", "NOCONN", "CONNECT"
+
+    // Remaining fields are optional because they are absent in "SEARCH" state
+    #[at_arg(position = 2)]
+    pub act: Option<String<8>>, // "LTE", "GSM", "eMTC", etc.
+    #[at_arg(position = 3)]
+    pub mode: Option<String<8>>, // "FDD" or "TDD"
+
+    #[at_arg(position = 4)]
+    pub mcc: Option<u32>,
+    #[at_arg(position = 5)]
+    pub mnc: Option<u32>,
+    #[at_arg(position = 6)]
+    pub cell_id: Option<u32>,
+
+    #[at_arg(position = 7)]
+    pub pcid: Option<u32>,
+    #[at_arg(position = 8)]
+    pub earfcn: Option<u32>,
+    #[at_arg(position = 9)]
+    pub band: Option<u32>,
+    #[at_arg(position = 10)]
+    pub ul_bw: Option<u32>,
+    #[at_arg(position = 11)]
+    pub dl_bw: Option<u32>,
+
+    #[at_arg(position = 12)]
+    pub tac: Option<u32>,
+
+    #[at_arg(position = 13)]
+    pub rsrp: Option<i32>,
+    #[at_arg(position = 14)]
+    pub rsrq: Option<i32>,
+    #[at_arg(position = 15)]
+    pub rssi: Option<i32>,
+    #[at_arg(position = 16)]
+    pub sinr: Option<i32>,
+    #[at_arg(position = 17)]
+    pub srxlev: Option<i32>,
+}
+
+#[derive(Clone, Debug, AtatResp)]
+pub struct CopsResponse {
+    /// <mode>
+    #[at_arg(position = 1)]
+    pub mode: u8,
+    /// <format>
+    #[at_arg(position = 2)]
+    pub format: Option<u8>,
+    /// <oper> (Operator Name)
+    #[at_arg(position = 3)]
+    pub oper: Option<String<32>>,
+    /// <AcT> (Access Technology)
+    #[at_arg(position = 4)]
+    pub act: Option<u8>,
+}
+
 /// Network Registration Status (LTE-M)
 /// When <n>=0, 1, or 2 and the command is executed successfully:
 /// +CEREG: <n>,<stat>[,[<tac>],[<ci>],[<AcT>[,<cause_type>,<reject_cause>]]]

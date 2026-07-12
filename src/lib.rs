@@ -18,7 +18,9 @@ compile_error!("no chip selected; enable exactly one of `bg95`, `bg96` or `eg916
     all(feature = "bg95", feature = "eg916u"),
     all(feature = "bg96", feature = "eg916u")
 ))]
-compile_error!("features `bg95`, `bg96` and `eg916u` are mutually exclusive; enable exactly one chip");
+compile_error!(
+    "features `bg95`, `bg96` and `eg916u` are mutually exclusive; enable exactly one chip"
+);
 
 use thiserror::Error;
 

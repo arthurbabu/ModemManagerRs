@@ -104,6 +104,8 @@ enum ModemRevision {
     R018,
     R014,
     R012,
+    /// Quectel EG916U (LTE Cat 1bis), e.g. "EG916QGLLGR01A05M04_...".
+    Eg916u,
     Unknown,
 }
 
@@ -111,6 +113,8 @@ pub const INGRESS_BUF_SIZE: usize = 1024;
 pub const URC_CAPACITY: usize = 128;
 pub const URC_SUBSCRIBERS: usize = 3;
 
+// Cat-M / NB-IoT specific (AT+QCFG="iotopmode"); not applicable to EG916U.
+#[cfg(not(feature = "eg916u"))]
 fn get_iotop_mode(configuration: ModemConfiguration) -> Result<u8, ModemError> {
     let rat = configuration.get_rat_order();
     let rat_order = rat.as_str();
@@ -175,30 +179,55 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         // References:
         //   https://docs.rs/atat_derive/latest/atat_derive/derive.AtatCmd.html
         //
-        match self.client.send(&GetVersionInfo).await {
-            Ok(version) => {
-                log::info!("Modem version: {:?}", version);
-                let version_code: &[u8] = version.code.as_slice();
-                let version_str = core::str::from_utf8(version_code).unwrap();
-
-                self.rev = match version_str {
-                    s if s.contains("BG95M3LAR02A03_01.200.01.200") => ModemRevision::R200,
-                    s if s.contains("BG96MAR02A07M1G_01.018.00.000") => ModemRevision::R018,
-                    s if s.contains("BG96MAR02A07M1G_01.018.01.018") => ModemRevision::R018,
-                    s if s.contains("BG95M3LAR02A03_01.014.01.014") => ModemRevision::R014,
-                    s if s.contains("BG95M3LAR02A03_01.012.01.012") => ModemRevision::R012,
-                    _ => {
-                        log::warn!("Unknown modem revision");
-                        ModemRevision::Unknown
+        // Right after boot the modem interleaves the RDY / APP RDY URCs, so the
+        // first AT+QGMR can time out or come back empty. Retry until we read a
+        // real version string.
+        const ATTEMPTS: usize = 5;
+        for attempt in 0..ATTEMPTS {
+            match self.client.send(&GetVersionInfo).await {
+                Ok(version) => {
+                    let version_code: &[u8] = version.code.as_slice();
+                    if version_code.is_empty() {
+                        log::debug!(
+                            "Empty modem version (attempt {}/{}), retrying...",
+                            attempt + 1,
+                            ATTEMPTS
+                        );
+                        compat::delay_ms(500).await;
+                        continue;
                     }
-                };
-                Ok(())
-            }
-            Err(e) => {
-                log::error!("Modem version not found: {:?}", e);
-                Err(ModemError::NotResponding)
+
+                    let version_str = core::str::from_utf8(version_code).unwrap_or("");
+                    log::info!("Modem version: {}", version_str);
+
+                    self.rev = match version_str {
+                        s if s.contains("BG95M3LAR02A03_01.200.01.200") => ModemRevision::R200,
+                        s if s.contains("BG96MAR02A07M1G_01.018.00.000") => ModemRevision::R018,
+                        s if s.contains("BG96MAR02A07M1G_01.018.01.018") => ModemRevision::R018,
+                        s if s.contains("BG95M3LAR02A03_01.014.01.014") => ModemRevision::R014,
+                        s if s.contains("BG95M3LAR02A03_01.012.01.012") => ModemRevision::R012,
+                        s if s.contains("EG916") => ModemRevision::Eg916u,
+                        _ => {
+                            log::warn!("Unknown modem revision: {}", version_str);
+                            ModemRevision::Unknown
+                        }
+                    };
+                    return Ok(());
+                }
+                Err(e) => {
+                    log::debug!(
+                        "AT+QGMR attempt {}/{} failed ({:?}), retrying...",
+                        attempt + 1,
+                        ATTEMPTS,
+                        e
+                    );
+                    compat::delay_ms(500).await;
+                }
             }
         }
+
+        log::error!("Could not read modem version after {} attempts", ATTEMPTS);
+        Err(ModemError::NotResponding)
     }
 
     async fn update_imei(&mut self) -> Result<(), ModemError> {
@@ -332,35 +361,45 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
     }
 
     pub async fn test_sim(&mut self) -> Result<(), ModemError> {
+        // Right after power-on the SIM can transiently report "SIM failure"
+        // (CME 13) or "SIM busy" (CME 14) while it initialises, so poll
+        // `AT+CPIN?` a few times before declaring failure.
+        //
+        // Note: when the SIM is not READY the modem replies with
+        // `+CME ERROR: <n>`, which atat routes to the URC channel (it is a
+        // registered URC), so the `AT+CPIN?` command itself times out and we
+        // must inspect the URC to classify the error.
+        const ATTEMPTS: usize = 5;
         let mut subscriber = self.urc_channel.subscribe().unwrap();
 
-        match self.client.send(&GetSimStatus).await {
-            Ok(status) => {
-                log::info!("SIM status: {:?}", status);
-                let cmd_sim_ready = "READY";
-                let cmd_sim_no_pin = "SIM PIN";
-                if status.code.contains(cmd_sim_ready) {
-                    log::info!("SIM Ready");
-                    if let Ok(res) = self.client.send(&GetIccid {}).await {
-                        log::info!("ICCID: {:?}", res.iccid);
+        for attempt in 0..ATTEMPTS {
+            match self.client.send(&GetSimStatus).await {
+                Ok(status) => {
+                    log::info!("SIM status: {:?}", status);
+                    if status.code.contains("READY") {
+                        log::info!("SIM Ready");
+                        if let Ok(res) = self.client.send(&GetIccid {}).await {
+                            log::info!("ICCID: {:?}", res.iccid);
+                        }
+                        return Ok(());
+                    } else if status.code.contains("SIM PIN") {
+                        log::error!("SIM PIN required");
+                        return Err(ModemError::SimError);
                     }
-                    return Ok(());
-                } else if status.code.contains(cmd_sim_no_pin) {
-                    log::info!("PIN missing");
-                    return Err(ModemError::SimError);
+                }
+                Err(e) => {
+                    log::debug!(
+                        "AT+CPIN? attempt {} returned no direct response ({:?})",
+                        attempt + 1,
+                        e
+                    );
                 }
             }
-            Err(e) => {
-                log::error!("Unknown SIM status response: {:?}", e);
-                // Do not return error here, as we can still try to get the SIM status from URC
-            }
-        }
 
-        for _ in 0..2 {
-            compat::delay_ms(1000).await;
-            match subscriber.try_next_message_pure() {
-                Some(Urc::CmeError(cme_error)) => {
-                    log::error!("CME error: {:?}", cme_error);
+            // Drain URCs looking for a CME error to classify.
+            compat::delay_ms(500).await;
+            while let Some(urc) = subscriber.try_next_message_pure() {
+                if let Urc::CmeError(cme_error) = urc {
                     match cme_error.err {
                         10 => {
                             log::error!("SIM not inserted");
@@ -370,25 +409,22 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                             log::error!("SIM PIN required");
                             return Err(ModemError::SimError);
                         }
-                        14 => {
-                            log::error!("SIM busy");
-                            return Err(ModemError::SimError);
+                        // 13 (SIM failure) and 14 (SIM busy) are commonly
+                        // transient during SIM init: keep retrying.
+                        13 | 14 => {
+                            log::info!("SIM not ready yet (CME {}), retrying...", cme_error.err);
                         }
-                        _ => {
-                            log::error!("Unknown CME error: {:?}", cme_error);
+                        other => {
+                            log::warn!("Unhandled SIM CME error {}, retrying...", other);
                         }
                     }
-                    return Err(ModemError::SimError);
-                }
-                Some(e) => {
-                    log::error!("Unknown URC {:?}", e);
-                }
-                None => {
-                    log::debug!("Waiting for response...");
                 }
             }
+
+            compat::delay_ms(1000).await;
         }
 
+        log::error!("SIM not ready after {} attempts", ATTEMPTS);
         Err(ModemError::SimErrorUnknown)
     }
 
@@ -455,111 +491,147 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         &mut self,
         configuration: ModemConfiguration,
     ) -> Result<(), ModemError> {
-        match self
-            .client
-            .send(&ConfigureBands {
-                param: HeaplessString::try_from("band").unwrap(),
-                gsm_band_mask: HeaplessBytes::try_from(
-                    configuration
-                        .get_band_string(RadioAccessTechnology::GSM)
-                        .unwrap()
-                        .as_bytes(),
-                )
-                .unwrap(),
-                emtc_band_mask: HeaplessBytes::try_from(
-                    configuration
-                        .get_band_string(RadioAccessTechnology::EMTC)
-                        .unwrap()
-                        .as_bytes(),
-                )
-                .unwrap(),
-                nbiot_band_mask: HeaplessBytes::try_from(
-                    configuration
-                        .get_band_string(RadioAccessTechnology::NbIoT)
-                        .unwrap()
-                        .as_bytes(),
-                )
-                .unwrap(),
-                effect: ConfigurationEffect::Immediately,
-            })
-            .await
+        #[cfg(feature = "eg916u")]
         {
-            Ok(_) => {}
-            Err(e) => {
-                log::error!("Modem configuration not set: {:?}", e);
-                return Err(ModemError::NotResponding);
+            // EG916U (LTE Cat 1bis + GSM): the BG-family QCFG="band" (three
+            // per-RAT masks), "iotopmode" and "nwscanseq" layout does NOT apply
+            // to this chip and would be rejected, so we don't send them. Band /
+            // RAT selection is left at the modem default (automatic); we only
+            // pin the service domain to Packet-Switched for data, best-effort.
+            //
+            // TODO(eg916u): once the EG916U AT manual is available, set
+            // AT+QCFG="band" with the LTE band layout and the correct
+            // "nwscanseq" RAT codes here instead of relying on defaults.
+            let _ = &configuration;
+
+            if let Err(e) = self
+                .client
+                .send(&ConfigureServiceDomain {
+                    param: HeaplessString::try_from("servicedomain").unwrap(),
+                    service_domain: 1, // PS: Packet Switched
+                    effect: ConfigurationEffect::Immediately,
+                })
+                .await
+            {
+                // Not fatal on EG916U: fall back to the modem default.
+                log::warn!(
+                    "EG916U: could not set service domain ({:?}); using default",
+                    e
+                );
             }
+
+            log::info!("EG916U modem configuration set (bands left at modem default)");
+            return Ok(());
         }
 
-        match self
-            .client
-            .send(&ConfigureRatSearchingSequence {
-                param: HeaplessString::try_from("nwscanseq").unwrap(),
-                rat_searching_sequence: HeaplessBytes::try_from(
-                    configuration.get_rat_order().as_bytes(),
-                )
-                .unwrap(),
-                effect: ConfigurationEffect::Immediately,
-            })
-            .await
+        #[cfg(not(feature = "eg916u"))]
         {
-            Ok(_) => {}
-            Err(e) => {
-                log::error!("Modem configuration not set: {:?}", e);
-                return Err(ModemError::NotResponding);
+            match self
+                .client
+                .send(&ConfigureBands {
+                    param: HeaplessString::try_from("band").unwrap(),
+                    gsm_band_mask: HeaplessBytes::try_from(
+                        configuration
+                            .get_band_string(RadioAccessTechnology::GSM)
+                            .unwrap()
+                            .as_bytes(),
+                    )
+                    .unwrap(),
+                    emtc_band_mask: HeaplessBytes::try_from(
+                        configuration
+                            .get_band_string(RadioAccessTechnology::EMTC)
+                            .unwrap()
+                            .as_bytes(),
+                    )
+                    .unwrap(),
+                    nbiot_band_mask: HeaplessBytes::try_from(
+                        configuration
+                            .get_band_string(RadioAccessTechnology::NbIoT)
+                            .unwrap()
+                            .as_bytes(),
+                    )
+                    .unwrap(),
+                    effect: ConfigurationEffect::Immediately,
+                })
+                .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    log::error!("Modem configuration not set: {:?}", e);
+                    return Err(ModemError::NotResponding);
+                }
             }
-        };
 
-        match self
-            .client
-            .send(&ConfigureRatSearchingMode {
-                param: HeaplessString::try_from("nwscanmode").unwrap(),
-                rat_searching_mode: 0, // Automatic: GSM and LTE
-                effect: ConfigurationEffect::Immediately,
-            })
-            .await
-        {
-            Ok(_) => {}
-            Err(e) => {
-                log::error!("Modem configuration not set: {:?}", e);
-                return Err(ModemError::NotResponding);
-            }
-        };
+            match self
+                .client
+                .send(&ConfigureRatSearchingSequence {
+                    param: HeaplessString::try_from("nwscanseq").unwrap(),
+                    rat_searching_sequence: HeaplessBytes::try_from(
+                        configuration.get_rat_order().as_bytes(),
+                    )
+                    .unwrap(),
+                    effect: ConfigurationEffect::Immediately,
+                })
+                .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    log::error!("Modem configuration not set: {:?}", e);
+                    return Err(ModemError::NotResponding);
+                }
+            };
 
-        match self
-            .client
-            .send(&ConfigureServiceDomain {
-                param: HeaplessString::try_from("servicedomain").unwrap(),
-                service_domain: 1, // PS: Packet Switched
-                effect: ConfigurationEffect::Immediately,
-            })
-            .await
-        {
-            Ok(_) => {}
-            Err(e) => {
-                log::error!("Modem configuration not set: {:?}", e);
-                return Err(ModemError::NotResponding);
-            }
-        };
+            match self
+                .client
+                .send(&ConfigureRatSearchingMode {
+                    param: HeaplessString::try_from("nwscanmode").unwrap(),
+                    rat_searching_mode: 0, // Automatic: GSM and LTE
+                    effect: ConfigurationEffect::Immediately,
+                })
+                .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    log::error!("Modem configuration not set: {:?}", e);
+                    return Err(ModemError::NotResponding);
+                }
+            };
 
-        match self
-            .client
-            .send(&ConfigureIotOpMode {
-                param: HeaplessString::try_from("iotopmode").unwrap(),
-                mode: get_iotop_mode(configuration)?,
-                effect: ConfigurationEffect::Immediately,
-            })
-            .await
-        {
-            Ok(_) => {}
-            Err(e) => {
-                log::error!("Modem configuration not set: {:?}", e);
-                return Err(ModemError::NotResponding);
-            }
-        };
+            match self
+                .client
+                .send(&ConfigureServiceDomain {
+                    param: HeaplessString::try_from("servicedomain").unwrap(),
+                    service_domain: 1, // PS: Packet Switched
+                    effect: ConfigurationEffect::Immediately,
+                })
+                .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    log::error!("Modem configuration not set: {:?}", e);
+                    return Err(ModemError::NotResponding);
+                }
+            };
 
-        log::info!("Modem configuration set");
-        Ok(())
+            match self
+                .client
+                .send(&ConfigureIotOpMode {
+                    param: HeaplessString::try_from("iotopmode").unwrap(),
+                    mode: get_iotop_mode(configuration)?,
+                    effect: ConfigurationEffect::Immediately,
+                })
+                .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    log::error!("Modem configuration not set: {:?}", e);
+                    return Err(ModemError::NotResponding);
+                }
+            };
+
+            log::info!("Modem configuration set");
+            Ok(())
+        }
     }
 
     pub async fn get_nitz_time(&mut self) -> Result<i64, ModemError> {
@@ -754,38 +826,104 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
 
         info!("Attaching...");
         while compat::elapsed_ms(now) < timeout.as_millis() as u64 {
-            compat::delay_ms(500).await;
+            compat::delay_ms(1000).await;
 
-            match self.client.send(&GetNetworkInfo).await {
-                Ok(info) => {
-                    log::info!("Network info: {:?}", info);
-                    if info.act.contains("No Service") {
-                        log::debug!("Searching...");
-                        continue;
-                    } else if info.act.contains("EDGE") {
-                        self.mode = ModemMode::EDGE;
-                        let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
-                        log::info!("Using 2G after {} s", t.as_secs());
-                        return Ok(t);
-                    } else if info.act.contains("GPRS") {
-                        self.mode = ModemMode::GPRS;
-                        let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
-                        log::info!("Using 2G after {} s", t.as_secs());
-                        return Ok(t);
-                    } else if info.act.contains("eMTC") || info.act.contains("CAT-M1") {
-                        self.mode = ModemMode::LTEM;
-                        let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
-                        log::info!("Using LTE-M after {} s", t.as_secs());
-                        return Ok(t);
-                    } else if info.act.contains("NBIoT") || info.act.contains("CAT-NB1") {
-                        self.mode = ModemMode::NBIoT;
-                        let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
-                        log::info!("Using NB-IoT after {} s", t.as_secs());
-                        return Ok(t);
+            #[cfg(not(feature = "eg916u"))]
+            {
+                match self.client.send(&GetNetworkInfo).await {
+                    Ok(info) => {
+                        log::info!("Network info: {:?}", info);
+
+                        let act = info.act.as_str();
+
+                        // 2. Handle "SEARCH" or "No Service"
+                        if act == "SEARCH" || act.contains("No Service") {
+                            log::debug!("Searching...");
+                            continue;
+                        }
+
+                        // 3. Map the technology strings
+                        match act {
+                            a if a.contains("LTE") => {
+                                self.mode = ModemMode::LTEM;
+                                let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
+                                log::info!("Using LTE after {} s", t.as_secs());
+                                return Ok(t);
+                            }
+                            a if a.contains("GSM") || a.contains("GPRS") || a.contains("EDGE") => {
+                                self.mode = ModemMode::EDGE;
+                                let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
+                                log::info!("Using 2G after {} s", t.as_secs());
+                                return Ok(t);
+                            }
+                            a if a.contains("NBIoT") => {
+                                self.mode = ModemMode::NBIoT;
+                                let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
+                                log::info!("Using NB-IoT after {} s", t.as_secs());
+                                return Ok(t);
+                            }
+                            _ => {
+                                log::warn!("Unknown or unstable technology: {}", act);
+                                continue;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Network info error: {:?}", e);
                     }
                 }
-                Err(e) => {
-                    log::error!("Network info not found: {:?}", e);
+            }
+
+            #[cfg(feature = "eg916u")]
+            {
+                match self.client.send(&GetCopsInfo).await {
+                    Ok(info) => {
+                        log::info!("Network info: {:?}", info);
+
+                        // 1. Normalize the integer technology code into a string
+                        // 0,3 = GSM/2G | 7,8 = LTE/Cat-M1 | 9 = NB-IoT
+                        let act = match info.act {
+                            Some(7) | Some(8) => "LTE",
+                            Some(9) => "NBIoT",
+                            Some(0) | Some(3) => "GSM",
+                            _ => "SEARCH",
+                        };
+
+                        // 2. Handle "SEARCH" or "No Service"
+                        if act == "SEARCH" {
+                            log::debug!("Searching...");
+                            continue;
+                        }
+
+                        // 3. Map the technology strings
+                        match act {
+                            "LTE" => {
+                                self.mode = ModemMode::LTEM;
+                                let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
+                                log::info!("Using LTE after {} s", t.as_secs());
+                                return Ok(t);
+                            }
+                            "GSM" => {
+                                self.mode = ModemMode::EDGE;
+                                let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
+                                log::info!("Using 2G after {} s", t.as_secs());
+                                return Ok(t);
+                            }
+                            "NBIoT" => {
+                                self.mode = ModemMode::NBIoT;
+                                let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
+                                log::info!("Using NB-IoT after {} s", t.as_secs());
+                                return Ok(t);
+                            }
+                            _ => {
+                                log::warn!("Unknown or unstable technology code: {}", act);
+                                continue;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Network info error: {:?}", e);
+                    }
                 }
             }
         }
@@ -844,6 +982,17 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         info!("Activating context...");
 
         let now = compat::Instant::now();
+
+        match self
+            .client
+            .send(&DeactivatePDPContext { context_id: 1 })
+            .await
+        {
+            Ok(_) => {
+                log::info!("Context deactivated");
+            }
+            Err(e) => {}
+        }
 
         match self
             .client
@@ -1390,11 +1539,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
     ///
     /// Data larger than one AT payload chunk (256 bytes) is split across
     /// multiple `AT+QSSLSEND` operations.
-    pub async fn ssl_socket_send(
-        &mut self,
-        client_id: u8,
-        data: &[u8],
-    ) -> Result<(), ModemError> {
+    pub async fn ssl_socket_send(&mut self, client_id: u8, data: &[u8]) -> Result<(), ModemError> {
         if data.is_empty() {
             return Ok(());
         }
@@ -1805,6 +1950,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         }
 
         // Configure hostname validation
+        /*
         match self
             .client
             .send(&ConfigureSslCheckHost {
@@ -1822,6 +1968,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 return Err(ModemError::NotResponding);
             }
         }
+        */
 
         // Configure ignore local time
         match self
@@ -2396,5 +2543,20 @@ mod tests {
         let ts = get_timestamp_from_nitz_response(dt_str);
         assert!(ts.is_ok());
         assert_eq!(ts.unwrap(), 1762889945);
+    }
+
+    #[test]
+    fn debug_serving_cell() {
+        use crate::quectel_atat::responses::ServingCellInfo;
+        use atat::serde_at;
+        // The exact raw string from your failing LIMSRV log
+        let log_output = b"+QENG: \"servingcell\",\"LIMSRV\",\"LTE\",\"FDD\",208,01,FDC8413,18,9335,28,5,5,F20E,-101,-10,-71,5,23";
+
+        // Attempt to parse it
+        let result: Result<ServingCellInfo, _> = serde_at::from_slice(log_output);
+
+        // This will print the detailed internal Serde error (e.g., TypeMismatch, InvalidDigit)
+        // and often the exact index where it failed!
+        println!("Detailed Parser Result: {:#?}", result);
     }
 }

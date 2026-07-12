@@ -240,6 +240,14 @@ pub struct ConfigureContext {
 #[at_cmd("+QNWINFO", NetworkInfo, timeout_ms = 300)]
 pub struct GetNetworkInfo;
 
+#[derive(Clone, AtatCmd)]
+#[at_cmd(r#"+QENG="servingcell""#, ServingCellInfo, timeout_ms = 300)]
+pub struct GetServingCellInfo;
+
+#[derive(Clone, AtatCmd)]
+#[at_cmd("+COPS?", CopsResponse, timeout_ms = 300)]
+pub struct GetCopsInfo;
+
 /// AT+CEREG EPS Network Registration Status
 ///
 /// This command queries the LTE network registration status and controls the presentation of an unsolicited

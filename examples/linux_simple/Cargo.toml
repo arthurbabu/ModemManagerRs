@@ -13,7 +13,13 @@ atat = { version = "0.24.1", features = [
     "hex_str_arrays",
     "log",
 ] }
-quectel-bg9x-eh-driver = { path = "../../" }
+# This example targets the EG916U (LTE Cat 1bis). `default-features = false` is
+# required so the crate's default `bg95` chip is not also enabled (chips are
+# mutually exclusive); re-add the blocking `std` runtime explicitly.
+quectel-bg9x-eh-driver = { path = "../../", default-features = false, features = [
+    "eg916u",
+    "std",
+] }
 static_cell = "2.1.0"
 critical-section = { version = "1.1.2", features = ["std"] }
 embedded-io = { version = "0.6.1", features = ["std"] }
