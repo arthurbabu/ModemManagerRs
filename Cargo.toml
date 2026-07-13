@@ -1,5 +1,5 @@
 [package]
-name = "quectel-bg9x-eh-driver"
+name = "modem-manager-rs"
 description = "Rust embedded-hal driver for the Quectel BG9X cellular modems"
 homepage = "https://gitlab.com/scrobotics/embedded-rs/quectel-atat-rs/"
 authors = ["Jorge Muñoz", "Xabier Crespo <x.crespo@scrobotics.es>"]
@@ -10,12 +10,11 @@ version = "0.4.2"
 edition = "2021"
 
 [dependencies]
-log = { version = "0.4.19", default-features = false }
-atat = { version = "0.24.1", features = [
+log = { version = "0.4.19", default-features = false , optional = true}
+atat = { git="https://github.com/arthurbabu/atat.git", features = [
     "derive",
     "bytes",
     "hex_str_arrays",
-    "log",
 ] }
 
 static_cell = "2.1.0"
@@ -33,25 +32,27 @@ maybe-async-cfg = "0.2"
 chrono = { version = "0.4.38", default-features = false }
 
 # `std` runtime (blocking): uses the atat blocking client + std timing.
-embedded-io = "0.6.1"
+embedded-io = "0.7.1"
 # Blocking network abstraction traits, exposed by the `std` socket wrapper
 # (`tcp_std`). `nb` is the non-blocking result type its methods use.
 embedded-nal = { version = "0.9.0", optional = true }
 nb = { version = "1", optional = true }
 
 # `embassy` runtime (async): uses the atat async client + embassy-time.
-embassy-time = { version = "0.4", optional = true }
-embedded-io-async = { version = "0.6.1", optional = true }
+embassy-time = { version = "0.5.1", optional = true }
+embedded-io-async = { version = "0.7.0", optional = true }
 # `embedded-nal-async` exposes the async TCP-socket traits the modem sockets
 # implement (async-only, hence embassy-gated).
-embedded-nal-async = { version = "0.8", optional = true }
+embedded-nal-async = { version = "0.9.0", optional = true }
 # `embassy-sync` provides the async Mutex used to share the modem between the
 # socket client and its open connections.
-embassy-sync = { version = "0.6", optional = true }
+embassy-sync = { version = "0.8.0", optional = true }
+defmt = { version = "1.1.1", optional = true}
+heapless = { version = "0.9.3", default-features = false}
 
 [features]
 # `std` is the default runtime so `cargo build` / `cargo test` work out of the box.
-default = ["bg95", "std"]
+default = ["bg95", "std", "log"]
 
 # Chip selection (mutually exclusive; enforced by a compile_error in lib.rs).
 # `bg95`/`bg96`  -> Cat-M / NB-IoT / GSM (band lists differ only).
@@ -59,6 +60,8 @@ default = ["bg95", "std"]
 bg95 = []
 bg96 = []
 eg916u = []
+defmt = ["dep:defmt", "atat/defmt", "heapless/defmt"]
+log = ["dep:log", "atat/log"]
 
 # Runtime selection (mutually exclusive, enforced by a compile_error in lib.rs).
 # `std`     -> blocking driver, std::thread + std::time timing.

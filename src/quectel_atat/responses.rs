@@ -17,13 +17,16 @@ pub struct Ready;
 pub struct AppReady;
 
 #[derive(Clone, AtatResp, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MessageWaitingIndication;
 
 /// Imei
 ///
 /// International Mobile Equipment Identity (IMEI) number of the module.
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Imei {
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     pub imei: Bytes<15>,
 }
 
@@ -31,7 +34,9 @@ pub struct Imei {
 ///
 /// Integrated Circuit Card Identifier number of the (U)SIM card.
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Iccid {
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     pub iccid: Bytes<20>,
 }
 
@@ -40,6 +45,7 @@ pub struct Iccid {
 /// +CPIN: <code>
 /// It can also return +CMS ERROR: <err> if an error occurs.
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SimStatus {
     pub code: String<32>,
 }
@@ -48,13 +54,16 @@ pub struct SimStatus {
 ///
 /// Returns the firmware version of the module.
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct VersionInfo {
     #[at_arg(position = 0)]
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     pub code: Bytes<64>,
 }
 
 /// Network Information
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NetworkInfo {
     /// Access technology
     /// String type. Access technology selected.
@@ -88,6 +97,7 @@ pub struct NetworkInfo {
 /// Serving Cell Information for LTE
 /// Response format: +QENG: "servingcell",<state>,"LTE",<is_tdd>,<mcc>,<mnc>,<cellid>,<pcid>,<earfcn>,<freq_band_ind>,<ul_bw>,<dl_bw>,<tac>,<rsrp>,<rsrq>,<rssi>,<sinr>,<srxlev>
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ServingCellInfo {
     #[at_arg(position = 0)]
     pub tag: String<16>, // "servingcell"
@@ -101,11 +111,14 @@ pub struct ServingCellInfo {
     pub mode: Option<String<8>>, // "FDD" or "TDD"
 
     #[at_arg(position = 4)]
-    pub mcc: Option<u32>,
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
+    pub mcc: Option<Bytes<3>>,
     #[at_arg(position = 5)]
-    pub mnc: Option<u32>,
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
+    pub mnc: Option<Bytes<3>>,
     #[at_arg(position = 6)]
-    pub cell_id: Option<u32>,
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
+    pub cell_id: Option<Bytes<8>>,
 
     #[at_arg(position = 7)]
     pub pcid: Option<u32>,
@@ -119,7 +132,8 @@ pub struct ServingCellInfo {
     pub dl_bw: Option<u32>,
 
     #[at_arg(position = 12)]
-    pub tac: Option<u32>,
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
+    pub tac: Option<Bytes<4>>,
 
     #[at_arg(position = 13)]
     pub rsrp: Option<i32>,
@@ -134,6 +148,7 @@ pub struct ServingCellInfo {
 }
 
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CopsResponse {
     /// <mode>
     #[at_arg(position = 1)]
@@ -156,6 +171,7 @@ pub struct CopsResponse {
 /// When <n>=4 and the command is executed successfully :
 /// +CEREG: <n>,<stat>[,[<tac>],[<ci>],[<AcT>][,[<cause_type>],[<reject_cause>][,[<Active-Time>],[<Periodic-TAU>]]]]
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EPSNetworkRegistrationStatusResponse {
     /// <n>
     /// Integer type. The type of unsolicited result code presentation.
@@ -243,6 +259,7 @@ pub struct EPSNetworkRegistrationStatusResponse {
 /// When <n>=4 and the command is executed successfully :
 ///   +CGREG: <n>,<stat>[,[<lac>],[<ci>],[<AcT>],[<rac>][,[<cause_type>],[<reject_cause>][,[<Active-Time>],[<Periodic-RAU>],[<GPRS-READY-timer>]]]]
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EGPRSNetworkRegistrationStatusResponse {
     /// <n>
     /// Integer type. The type of unsolicited result code presentation.
@@ -320,6 +337,7 @@ pub struct EGPRSNetworkRegistrationStatusResponse {
 
 /// Signal Information
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GetSignalStrengthResponse {
     /// String type. Service mode in which the MT will unsolicitedly report the signal strength.
     pub mode: String<32>,
@@ -342,6 +360,7 @@ pub struct GetSignalStrengthResponse {
 ///
 /// NOTE: we will only parse the first context
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PDPContextInfo {
     /// <contextID>
     /// Integer type. The PDP context identifier.
@@ -367,6 +386,7 @@ pub struct PDPContextInfo {
 
 /// Latest Time Synchronized Through NITZ Network
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NitzTimeResponse {
     /// String type: "<time>,<dst>""
     /// Time format: String type "yy/MM/dd,hh:mm:ss±zz", where characters indicate year (two last
@@ -380,6 +400,7 @@ pub struct NitzTimeResponse {
 
 /// Latest Time Synchronized Through NTP Network
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NtpTimeResponse {
     /// Error code of operation.
     pub err: u8,
@@ -398,11 +419,13 @@ pub struct FileDataModeStarted;
 /// CONNECT <read_length> response from AT+QFREAD
 /// Includes a buffer to store the binary data read from the file
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct FileReadStarted {
     /// <read_length>
     /// Integer type. The actual read length. Unit: byte.
     pub read_length: u32,
     /// Binary data read from the file (max 256 bytes per read)
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     pub data: Bytes<256>,
 }
 
@@ -410,6 +433,7 @@ pub struct FileReadStarted {
 impl atat::AtatResp for FileReadStarted {}
 
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct FileUploadDoneResponse {
     /// <upload_size>
     /// Integer type. The size of the uploaded file.
@@ -417,12 +441,14 @@ pub struct FileUploadDoneResponse {
     pub upload_size: u32,
     /// <checksum>
     /// 16 bit checksum based on bitwise XOR in hex format
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     pub checksum: Bytes<4>,
 }
 
 /// File Download Done Response
 /// +QFDWL: <download_size>,<checksum>
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct FileDownloadDoneResponse {
     /// <download_size>
     /// Integer type. The size of the downloaded file.
@@ -437,6 +463,7 @@ pub struct FileDownloadDoneResponse {
 /// File List Entry Response
 /// +QFLST: <filename>,<file_size>
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct FileListEntry {
     /// <filename>
     /// String type. Filename. The maximum length is 80 bytes.
@@ -451,6 +478,7 @@ pub struct FileListEntry {
 /// File List Response (wrapper for multiple entries)
 /// Can contain up to 5 file entries
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct FileListResponse {
     #[at_arg(position = 0)]
     pub files: atat::heapless::Vec<FileListEntry, 5>,
@@ -459,6 +487,7 @@ pub struct FileListResponse {
 /// File Open Response
 /// +QFOPEN: <filehandle>
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct FileOpenResponse {
     /// <filehandle>
     /// Integer type. The handle of the file to be operated.
@@ -469,6 +498,7 @@ pub struct FileOpenResponse {
 /// File Write Response
 /// +QFWRITE: <written_length>,<total_length>
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct FileWriteResponse {
     /// <written_length>
     /// Integer type. The actual written length. Unit: byte.
@@ -482,6 +512,7 @@ pub struct FileWriteResponse {
 
 /// MQTT Open Response
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MqttOpenResponse {
     /// <tcpconnectID>
     /// Integer type. The MQTT socket identifier from 0 to 5.
@@ -502,6 +533,7 @@ pub struct MqttOpenResponse {
 
 /// URC +QMTSTAT response
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MqttStatusResponse {
     /// <tcpconnectID>
     /// Integer type. The MQTT socket identifier from 0 to 5.
@@ -522,6 +554,7 @@ pub struct MqttStatusResponse {
 
 /// URC +QMTCONN response
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MqttConnectResponse {
     /// <tcpconnectID>
     /// Integer type. The MQTT socket identifier from 0 to 5.
@@ -548,6 +581,7 @@ pub struct MqttConnectResponse {
 
 /// URC +QMTPUB response
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MqttPublishResponse {
     /// <tcpconnectID>
     /// Integer type. The MQTT socket identifier from 0 to 5.
@@ -574,6 +608,7 @@ pub struct MqttPublishResponse {
 
 /// URC +QMTDISC response
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MqttDisconnectResponse {
     /// <tcpconnectID>
     /// Integer type. The MQTT socket identifier from 0 to 5.
@@ -589,6 +624,7 @@ pub struct MqttDisconnectResponse {
 
 /// URC +QMTCLOSE response
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MqttCloseResponse {
     /// <tcpconnectID>
     /// Integer type. The MQTT socket identifier from 0 to 5.
@@ -616,6 +652,7 @@ pub struct MqttCloseResponse {
 /// 15: SIM wrong
 /// 16: Incorrect password
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CmeError {
     /// <err>
     /// Integer type. The error code.
@@ -625,11 +662,13 @@ pub struct CmeError {
 
 /// Response for the AT+QGPSLOC=2 command
 #[derive(Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GnssPositionInformationResponse {
     /// <UTC>
     /// String type. UTC time.
     /// Format: hhmmss.sss
     #[at_arg(position = 1)]
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     pub utc: Bytes<10>,
     /// <latitude>
     /// Float type. Latitude position.
@@ -655,6 +694,7 @@ pub struct GnssPositionInformationResponse {
     /// String type. Course over ground based on true north
     /// Format: ddd.mm
     #[at_arg(position = 7)]
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     pub cog: Bytes<6>,
     /// <spkm>
     /// Float type. Speed over ground (km/h)
@@ -668,18 +708,22 @@ pub struct GnssPositionInformationResponse {
     /// String type. UTC time after fixing position
     /// Format: ddmmyy
     #[at_arg(position = 10)]
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     pub date: Bytes<6>,
     /// <nsat>
     /// Number of satellites
     #[at_arg(position = 11)]
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     pub nsat: Bytes<2>,
 }
 
 /// Response for the AT+QGPSGNMEA="GGA" command.
 /// It uses the GGA NMEA sentence format
 #[derive(Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GnssGgaNmeaSentenceResponse {
     #[at_arg(position = 1)]
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     _header: Bytes<6>,
     #[at_arg(position = 2)]
     pub utc: Option<f32>,
@@ -694,6 +738,7 @@ pub struct GnssGgaNmeaSentenceResponse {
     #[at_arg(position = 7)]
     pub quality: u8,
     #[at_arg(position = 8)]
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     pub satellites: Option<Bytes<2>>,
     #[at_arg(position = 9)]
     pub hdop: Option<f32>,
@@ -708,6 +753,7 @@ pub struct GnssGgaNmeaSentenceResponse {
     #[at_arg(position = 14)]
     _age: Option<u16>,
     #[at_arg(position = 15)]
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     _checksum: Option<Bytes<3>>,
 }
 
@@ -720,6 +766,7 @@ pub struct GnssGgaNmeaSentenceResponse {
 /// `err == 0` means the (TLS) connection opened successfully; any other value
 /// is a Quectel error code (network/DNS/TLS handshake failure, etc.).
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SslOpenResponse {
     /// <clientID> — socket identifier (0-11).
     #[at_arg(position = 1)]
@@ -734,6 +781,7 @@ pub struct SslOpenResponse {
 /// `type` is a quoted keyword: `"recv"` (data available to read),
 /// `"closed"` (peer closed the connection), etc.
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SslUrcResponse {
     /// <type> — event keyword, e.g. "recv" or "closed".
     #[at_arg(position = 1)]
@@ -750,12 +798,14 @@ pub struct SslUrcResponse {
 /// TCP) response. `length` is the number of valid bytes in `data`; `0` means no
 /// data was currently buffered.
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SslRecvResponse {
     /// Number of valid bytes in `data`.
     #[at_arg(position = 1)]
     pub length: u16,
     /// The received bytes (up to the requested read length, max 512).
     #[at_arg(position = 2)]
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     pub data: Bytes<512>,
 }
 
@@ -764,6 +814,7 @@ pub struct SslRecvResponse {
 /// `err == 0` means the TCP connection opened successfully; any other value is a
 /// Quectel error code (network/DNS/connection failure, etc.).
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TcpOpenResponse {
     /// <connectID> — socket identifier (0-11).
     #[at_arg(position = 1)]
@@ -780,6 +831,7 @@ pub struct TcpOpenResponse {
 /// …) carry more fields and are not produced by the buffered client sockets this
 /// driver opens.
 #[derive(Clone, Debug, AtatResp)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TcpUrcResponse {
     /// <type> — event keyword, e.g. "recv" or "closed".
     #[at_arg(position = 1)]

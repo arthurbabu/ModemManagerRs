@@ -17,10 +17,10 @@ use atat::AtatIngress;
 use atat::DefaultDigester;
 use atat::Ingress;
 use atat::{Config as AtatConfig, ResponseSlot, UrcChannel};
-use quectel_bg9x_eh_driver::cellular::{
+use modem_manager_rs::cellular::{
     QuectelBG9X, INGRESS_BUF_SIZE, URC_CAPACITY, URC_SUBSCRIBERS,
 };
-use quectel_bg9x_eh_driver::quectel_atat::urc::Urc;
+use modem_manager_rs::quectel_atat::urc::Urc;
 use static_cell::StaticCell;
 
 extern crate alloc;

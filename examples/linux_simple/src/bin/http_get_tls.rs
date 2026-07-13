@@ -19,13 +19,13 @@
 
 use std::{env, thread, time};
 
-use quectel_bg9x_eh_driver::cellular::{
+use modem_manager_rs::cellular::{
     ssl_recv_digest_hook, QuectelBG9X, INGRESS_BUF_SIZE, URC_CAPACITY, URC_SUBSCRIBERS,
 };
-use quectel_bg9x_eh_driver::quectel_atat::types::{
+use modem_manager_rs::quectel_atat::types::{
     AuthenticationMethod, ModemConfiguration, SslAuthenticationMode, SslConfiguration, SslVersion,
 };
-use quectel_bg9x_eh_driver::quectel_atat::urc::Urc;
+use modem_manager_rs::quectel_atat::urc::Urc;
 
 use atat::blocking::Client;
 use atat::AtatIngress;
@@ -257,7 +257,7 @@ fn main() {
     request.push_str(CONFIG.http_path);
     request.push_str(" HTTP/1.1\r\nHost: ");
     request.push_str(CONFIG.http_host);
-    request.push_str("\r\nUser-Agent: quectel-bg9x-eh-driver\r\nAccept: */*\r\nConnection: close\r\n\r\n");
+    request.push_str("\r\nUser-Agent: modem_manager_rs\r\nAccept: */*\r\nConnection: close\r\n\r\n");
 
     log::info!("Sending HTTP request:\n{}", request);
     mm.ssl_socket_send(SOCKET_ID, request.as_bytes())

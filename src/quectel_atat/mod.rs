@@ -9,6 +9,12 @@ use atat::heapless_bytes::Bytes;
 use responses::*;
 use types::*;
 
+#[cfg(feature = "defmt")]
+use defmt::{debug, error, warn};
+
+#[cfg(not(feature = "defmt"))]
+use log::*;
+
 #[derive(Clone, AtatCmd)]
 #[at_cmd("", NoResponse, timeout_ms = 1000)]
 pub struct AT;
@@ -850,7 +856,6 @@ pub struct SslRecv {
 
 impl atat::AtatCmd for SslRecv {
     type Response = SslRecvResponse;
-    const MAX_LEN: usize = 32;
 
     fn write(&self, buf: &mut [u8]) -> usize {
         use core::fmt::Write as _;
@@ -1007,7 +1012,6 @@ pub struct TcpRecv {
 
 impl atat::AtatCmd for TcpRecv {
     type Response = SslRecvResponse;
-    const MAX_LEN: usize = 32;
 
     fn write(&self, buf: &mut [u8]) -> usize {
         use core::fmt::Write as _;
@@ -1074,7 +1078,6 @@ pub struct SendRawContents {
 
 impl atat::AtatCmd for SendRawContents {
     type Response = NoResponse;
-    const MAX_LEN: usize = 2560;
     const EXPECTS_RESPONSE_CODE: bool = false;
 
     fn write(&self, mut buf: &mut [u8]) -> usize {
@@ -1207,7 +1210,6 @@ pub struct ReadFile {
 
 impl atat::AtatCmd for ReadFile {
     type Response = FileReadStarted;
-    const MAX_LEN: usize = 64;
 
     fn write(&self, buf: &mut [u8]) -> usize {
         use core::fmt::Write as _;
@@ -1263,7 +1265,7 @@ impl atat::AtatCmd for ReadFile {
                                 let to_copy = core::cmp::min(read_length as usize, 256); // Max buffer size
                                 if binary_data.len() < read_length as usize {
                                     // Accept available bytes, but log a warning and document as modem bug
-                                    log::warn!("[MODEM BUG?] CONNECT response: expected {} bytes, got {} bytes. Accepting available bytes as last chunk.", read_length, binary_data.len());
+                                    warn!("[MODEM BUG?] CONNECT response: expected {} bytes, got {} bytes. Accepting available bytes as last chunk.", read_length, binary_data.len());
                                     let mut data_buffer = Bytes::<256>::new();
                                     data_buffer
                                         .extend_from_slice(
@@ -1271,7 +1273,7 @@ impl atat::AtatCmd for ReadFile {
                                                 [..core::cmp::min(binary_data.len(), to_copy)],
                                         )
                                         .map_err(|_| atat::Error::InvalidResponse)?;
-                                    log::debug!(
+                                    debug!(
                                         "Parsed read_length: {}, extracted {} bytes (short chunk)",
                                         read_length,
                                         data_buffer.len()
@@ -1287,10 +1289,9 @@ impl atat::AtatCmd for ReadFile {
                                     .extend_from_slice(&binary_data[..to_copy])
                                     .map_err(|_| atat::Error::InvalidResponse)?;
 
-                                log::debug!(
+                                debug!(
                                     "Parsed read_length: {}, extracted {} bytes",
-                                    read_length,
-                                    to_copy
+                                    read_length, to_copy
                                 );
 
                                 return Ok(FileReadStarted {
@@ -1302,11 +1303,11 @@ impl atat::AtatCmd for ReadFile {
                     }
                 }
 
-                log::error!("Failed to parse CONNECT response");
+                error!("Failed to parse CONNECT response");
                 Err(atat::Error::InvalidResponse)
             }
             Err(e) => {
-                log::error!("Error reading file: {:?}", e);
+                error!("Error reading file: {:?}", e);
                 Err(atat::Error::from(e))
             }
         }

@@ -16,6 +16,10 @@
 //! [`compat`] module, which is backed by `std::thread`/`std::time` for `std`
 //! and by `embassy-time` for `embassy`.
 
+#[cfg(feature = "defmt")]
+use defmt::*;
+
+#[cfg(not(feature = "defmt"))]
 use log::*;
 
 use embedded_hal::digital::OutputPin;
@@ -262,7 +266,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         client: Client<'static, W, INGRESS_BUF_SIZE>,
         urc_channel: &'static UrcChannel<Urc, URC_CAPACITY, URC_SUBSCRIBERS>,
     ) -> Result<Self, ModemError> {
-        log::info!("Initializing Quectel BG9X modem");
+        info!("Initializing Quectel BG9X modem");
 
         let mut driver = QuectelBG9X {
             pwr_key_pin: power_gpio,
@@ -307,7 +311,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 Ok(version) => {
                     let version_code: &[u8] = version.code.as_slice();
                     if version_code.is_empty() {
-                        log::debug!(
+                        debug!(
                             "Empty modem version (attempt {}/{}), retrying...",
                             attempt + 1,
                             ATTEMPTS
@@ -317,7 +321,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                     }
 
                     let version_str = core::str::from_utf8(version_code).unwrap_or("");
-                    log::info!("Modem version: {}", version_str);
+                    info!("Modem version: {}", version_str);
 
                     self.rev = match version_str {
                         s if s.contains("BG95M3LAR02A03_01.200.01.200") => ModemRevision::R200,
@@ -327,14 +331,14 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                         s if s.contains("BG95M3LAR02A03_01.012.01.012") => ModemRevision::R012,
                         s if s.contains("EG916") => ModemRevision::Eg916u,
                         _ => {
-                            log::warn!("Unknown modem revision: {}", version_str);
+                            warn!("Unknown modem revision: {}", version_str);
                             ModemRevision::Unknown
                         }
                     };
                     return Ok(());
                 }
                 Err(e) => {
-                    log::debug!(
+                    debug!(
                         "AT+QGMR attempt {}/{} failed ({:?}), retrying...",
                         attempt + 1,
                         ATTEMPTS,
@@ -345,7 +349,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             }
         }
 
-        log::error!("Could not read modem version after {} attempts", ATTEMPTS);
+        error!("Could not read modem version after {} attempts", ATTEMPTS);
         Err(ModemError::NotResponding)
     }
 
@@ -353,7 +357,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         let imei = match self.client.send(&GetImei).await {
             Ok(imei) => imei.imei,
             Err(e) => {
-                log::error!("IMEI not found: {:?}", e);
+                error!("IMEI not found: {:?}", e);
                 return Err(ModemError::NotResponding);
             }
         };
@@ -369,11 +373,11 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
     async fn disable_echo(&mut self) -> Result<(), ModemError> {
         match self.client.send(&SetEcho { on: EchoOn::Off }).await {
             Ok(_) => {
-                log::info!("Echo off");
+                info!("Echo off");
                 Ok(())
             }
             Err(e) => {
-                log::error!("Echo off failed: {:?}", e);
+                error!("Echo off failed: {:?}", e);
                 Err(ModemError::NotResponding)
             }
         }
@@ -389,15 +393,15 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         // RDY / APP RDY URCs, so the first few commands can time out.
         let mut alive = false;
         for _ in 0..3 {
-            log::info!("Sending AT command");
+            info!("Sending AT command");
             match self.client.send(&AT).await {
                 Ok(_) => {
-                    log::info!("Response Ok");
+                    info!("Response Ok");
                     alive = true;
                     break;
                 }
                 Err(e) => {
-                    log::error!("Response failed: {:?}", e);
+                    error!("Response failed: {:?}", e);
                 }
             }
             compat::delay_secs(5).await;
@@ -416,11 +420,11 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         for _ in 0..3 {
             match self.client.send(&SetEcho { on: EchoOn::Off }).await {
                 Ok(_) => {
-                    log::info!("Echo off");
+                    info!("Echo off");
                     return Ok(());
                 }
                 Err(e) => {
-                    log::error!("Echo off failed: {:?}", e);
+                    error!("Echo off failed: {:?}", e);
                 }
             }
             compat::delay_ms(500).await;
@@ -429,7 +433,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         // Echo could not be turned off; the modem is still responsive but data
         // socket parsing will be unreliable. Surface it rather than silently
         // continuing.
-        log::error!("Could not disable echo after modem power-on");
+        error!("Could not disable echo after modem power-on");
         Err(ModemError::NotResponding)
     }
 
@@ -444,10 +448,10 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             .await
         {
             Ok(_) => {
-                log::info!("Modem powering down");
+                info!("Modem powering down");
             }
             Err(e) => {
-                log::error!("Modem not powered down: {:?}", e);
+                error!("Modem not powered down: {:?}", e);
                 return Err(ModemError::NotResponding);
             }
         }
@@ -467,7 +471,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         match self.client.send(&AT).await {
             Ok(_) => Err(ModemError::OperationTimeout),
             Err(_) => {
-                log::info!("Modem powered down");
+                info!("Modem powered down");
                 Ok(())
             }
         }
@@ -476,11 +480,11 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
     pub async fn is_alive(&mut self) -> Result<(), ModemError> {
         match self.client.send(&AT).await {
             Ok(_) => {
-                log::info!("Modem alive");
+                info!("Modem alive");
                 Ok(())
             }
             Err(e) => {
-                log::error!("Modem not alive: {:?}", e);
+                error!("Modem not alive: {:?}", e);
                 Err(ModemError::NotResponding)
             }
         }
@@ -514,20 +518,20 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         for attempt in 0..ATTEMPTS {
             match self.client.send(&GetSimStatus).await {
                 Ok(status) => {
-                    log::info!("SIM status: {:?}", status);
+                    info!("SIM status: {:?}", status);
                     if status.code.contains("READY") {
-                        log::info!("SIM Ready");
+                        info!("SIM Ready");
                         if let Ok(res) = self.client.send(&GetIccid {}).await {
-                            log::info!("ICCID: {:?}", res.iccid);
+                            info!("ICCID: {:?}", res);
                         }
                         return Ok(());
                     } else if status.code.contains("SIM PIN") {
-                        log::error!("SIM PIN required");
+                        error!("SIM PIN required");
                         return Err(ModemError::SimError);
                     }
                 }
                 Err(e) => {
-                    log::debug!(
+                    debug!(
                         "AT+CPIN? attempt {} returned no direct response ({:?})",
                         attempt + 1,
                         e
@@ -541,20 +545,20 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 if let Urc::CmeError(cme_error) = urc {
                     match cme_error.err {
                         10 => {
-                            log::error!("SIM not inserted");
+                            error!("SIM not inserted");
                             return Err(ModemError::SimError);
                         }
                         11 => {
-                            log::error!("SIM PIN required");
+                            error!("SIM PIN required");
                             return Err(ModemError::SimError);
                         }
                         // 13 (SIM failure) and 14 (SIM busy) are commonly
                         // transient during SIM init: keep retrying.
                         13 | 14 => {
-                            log::info!("SIM not ready yet (CME {}), retrying...", cme_error.err);
+                            info!("SIM not ready yet (CME {}), retrying...", cme_error.err);
                         }
                         other => {
-                            log::warn!("Unhandled SIM CME error {}, retrying...", other);
+                            warn!("Unhandled SIM CME error {}, retrying...", other);
                         }
                     }
                 }
@@ -563,7 +567,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             compat::delay_ms(1000).await;
         }
 
-        log::error!("SIM not ready after {} attempts", ATTEMPTS);
+        error!("SIM not ready after {} attempts", ATTEMPTS);
         Err(ModemError::SimErrorUnknown)
     }
 
@@ -580,7 +584,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         {
             Ok(_) => Ok(()),
             Err(e) => {
-                log::error!("Modem functionality not set: {:?}", e);
+                error!("Modem functionality not set: {:?}", e);
                 Err(ModemError::NotResponding)
             }
         }
@@ -595,7 +599,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         match self.client.send(&ResetToFactoryDefault {}).await {
             Ok(_) => {}
             Err(e) => {
-                log::error!("Factory reset not set: {:?}", e);
+                error!("Factory reset not set: {:?}", e);
                 return Err(ModemError::NotResponding);
             }
         }
@@ -607,7 +611,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 Ok(())
             }
             Err(e) => {
-                log::error!("Restore configuration failed: {:?}", e);
+                error!("Restore configuration failed: {:?}", e);
                 Err(ModemError::NotResponding)
             }
         }
@@ -653,13 +657,13 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 .await
             {
                 // Not fatal on EG916U: fall back to the modem default.
-                log::warn!(
+                warn!(
                     "EG916U: could not set service domain ({:?}); using default",
                     e
                 );
             }
 
-            log::info!("EG916U modem configuration set (bands left at modem default)");
+            info!("EG916U modem configuration set (bands left at modem default)");
             return Ok(());
         }
 
@@ -696,7 +700,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             {
                 Ok(_) => {}
                 Err(e) => {
-                    log::error!("Modem configuration not set: {:?}", e);
+                    error!("Modem configuration not set: {:?}", e);
                     return Err(ModemError::NotResponding);
                 }
             }
@@ -715,7 +719,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             {
                 Ok(_) => {}
                 Err(e) => {
-                    log::error!("Modem configuration not set: {:?}", e);
+                    error!("Modem configuration not set: {:?}", e);
                     return Err(ModemError::NotResponding);
                 }
             };
@@ -731,7 +735,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             {
                 Ok(_) => {}
                 Err(e) => {
-                    log::error!("Modem configuration not set: {:?}", e);
+                    error!("Modem configuration not set: {:?}", e);
                     return Err(ModemError::NotResponding);
                 }
             };
@@ -747,7 +751,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             {
                 Ok(_) => {}
                 Err(e) => {
-                    log::error!("Modem configuration not set: {:?}", e);
+                    error!("Modem configuration not set: {:?}", e);
                     return Err(ModemError::NotResponding);
                 }
             };
@@ -763,12 +767,12 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             {
                 Ok(_) => {}
                 Err(e) => {
-                    log::error!("Modem configuration not set: {:?}", e);
+                    error!("Modem configuration not set: {:?}", e);
                     return Err(ModemError::NotResponding);
                 }
             };
 
-            log::info!("Modem configuration set");
+            info!("Modem configuration set");
             Ok(())
         }
     }
@@ -776,11 +780,11 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
     pub async fn get_nitz_time(&mut self) -> Result<i64, ModemError> {
         match self.client.send(&GetNetworkNitzTime { mode: 1 }).await {
             Ok(network_time_info) => {
-                log::info!("Network time: {:?}", network_time_info);
+                info!("Network time: {:?}", network_time_info);
                 get_timestamp_from_nitz_response(&network_time_info.time_and_dst)
             }
             Err(e) => {
-                log::error!("Network time not found: {:?}", e);
+                error!("Network time not found: {:?}", e);
                 Err(ModemError::NotResponding)
             }
         }
@@ -796,10 +800,10 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             .await
         {
             Ok(_) => {
-                log::info!("NTP request sent");
+                info!("NTP request sent");
             }
             Err(e) => {
-                log::error!("Network time not found: {:?}", e);
+                error!("Network time not found: {:?}", e);
                 return Err(ModemError::NotResponding);
             }
         }
@@ -814,19 +818,19 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                     match res.err {
                         0 => {}
                         _ => {
-                            log::error!("NTP failed");
+                            error!("NTP failed");
                             return Err(ModemError::NtpRequestFailed);
                         }
                     }
 
-                    log::info!("Network time: {:?}", res.time);
+                    info!("Network time: {:?}", res.time);
                     return get_timestamp_from_ntp_response(&res.time);
                 }
                 Some(e) => {
-                    log::error!("Unknown URC {:?}", e);
+                    error!("Unknown URC {:?}", e);
                 }
                 None => {
-                    log::debug!("Waiting for response...");
+                    debug!("Waiting for response...");
                 }
             }
         }
@@ -842,7 +846,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
     ///
     /// ```ignore
     /// let now = mm.get_ntp_datetime("0.pool.ntp.org").await?;
-    /// log::info!("UTC now: {}", now); // e.g. 2026-07-12 13:43:47 UTC
+    /// info!("UTC now: {}", now); // e.g. 2026-07-12 13:43:47 UTC
     /// ```
     pub async fn get_ntp_datetime(
         &mut self,
@@ -858,14 +862,14 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 if let Some(rssi) = signal_strength.rssi {
                     let signal = rssi.clamp(-140, -30);
                     let signal = -100 * (signal + 140) / (-140 + 30);
-                    log::info!("RSSI: {}dB ({}%)", rssi, signal);
+                    info!("RSSI: {}dB ({}%)", rssi, signal);
                     Ok((rssi, signal as u8))
                 } else {
                     Err(ModemError::NoNetwork)
                 }
             }
             Err(e) => {
-                log::error!("Signal strength not found: {:?}", e);
+                error!("Signal strength not found: {:?}", e);
                 Err(ModemError::NotResponding)
             }
         }
@@ -886,38 +890,38 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 .await
             {
                 Ok(status) => {
-                    log::info!("GPRS network registration status: {:?}", status);
+                    info!("GPRS network registration status: {:?}", status);
                     match status.stat {
                         1 => {
                             let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
-                            log::info!("Registered (Home) after {} s", t.as_secs());
+                            info!("Registered (Home) after {} s", t.as_secs());
                             return Ok(t);
                         }
                         2 => {
-                            log::debug!("Searching..."); // Searching
+                            debug!("Searching..."); // Searching
                             continue;
                         }
                         3 => {
-                            log::error!("Registration denied");
+                            error!("Registration denied");
                             return Err(ModemError::NoNetwork);
                         }
                         4 => {
-                            log::error!("Registration failed");
+                            error!("Registration failed");
                             return Err(ModemError::NoNetwork);
                         }
                         5 => {
                             let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
-                            log::info!("Registered (Roaming) after {} s", t.as_secs());
+                            info!("Registered (Roaming) after {} s", t.as_secs());
                             return Ok(t);
                         }
                         _ => {
-                            log::error!("Unknown registration status");
+                            error!("Unknown registration status");
                             return Err(ModemError::NoNetwork);
                         }
                     }
                 }
                 Err(e) => {
-                    log::error!("GPRS network registration status not found: {:?}", e);
+                    error!("GPRS network registration status not found: {:?}", e);
                 }
             }
         }
@@ -936,38 +940,38 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
 
             match self.client.send(&GetEPSNetworkRegistrationStatus {}).await {
                 Ok(status) => {
-                    log::info!("EPS network registration status: {:?}", status);
+                    info!("EPS network registration status: {:?}", status);
                     match status.stat {
                         1 => {
                             let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
-                            log::info!("Registered (Home) after {} s", t.as_secs());
+                            info!("Registered (Home) after {} s", t.as_secs());
                             return Ok(t);
                         }
                         2 => {
-                            log::debug!("Searching..."); // Searching
+                            debug!("Searching..."); // Searching
                             continue;
                         }
                         3 => {
-                            log::error!("Registration denied");
+                            error!("Registration denied");
                             return Err(ModemError::NoNetwork);
                         }
                         4 => {
-                            log::error!("Registration failed");
+                            error!("Registration failed");
                             return Err(ModemError::NoNetwork);
                         }
                         5 => {
                             let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
-                            log::info!("Registered (Roaming) after {} s", t.as_secs());
+                            info!("Registered (Roaming) after {} s", t.as_secs());
                             return Ok(t);
                         }
                         _ => {
-                            log::error!("Unknown registration status");
+                            error!("Unknown registration status");
                             return Err(ModemError::NoNetwork);
                         }
                     }
                 }
                 Err(e) => {
-                    log::error!("EPS network registration status not found: {:?}", e);
+                    error!("EPS network registration status not found: {:?}", e);
                 }
             }
         }
@@ -989,13 +993,13 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             {
                 match self.client.send(&GetNetworkInfo).await {
                     Ok(info) => {
-                        log::info!("Network info: {:?}", info);
+                        info!("Network info: {:?}", info);
 
                         let act = info.act.as_str();
 
                         // 2. Handle "SEARCH" or "No Service"
                         if act == "SEARCH" || act.contains("No Service") {
-                            log::debug!("Searching...");
+                            debug!("Searching...");
                             continue;
                         }
 
@@ -1004,29 +1008,29 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                             a if a.contains("LTE") => {
                                 self.mode = ModemMode::LTEM;
                                 let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
-                                log::info!("Using LTE after {} s", t.as_secs());
+                                info!("Using LTE after {} s", t.as_secs());
                                 return Ok(t);
                             }
                             a if a.contains("GSM") || a.contains("GPRS") || a.contains("EDGE") => {
                                 self.mode = ModemMode::EDGE;
                                 let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
-                                log::info!("Using 2G after {} s", t.as_secs());
+                                info!("Using 2G after {} s", t.as_secs());
                                 return Ok(t);
                             }
                             a if a.contains("NBIoT") => {
                                 self.mode = ModemMode::NBIoT;
                                 let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
-                                log::info!("Using NB-IoT after {} s", t.as_secs());
+                                info!("Using NB-IoT after {} s", t.as_secs());
                                 return Ok(t);
                             }
                             _ => {
-                                log::warn!("Unknown or unstable technology: {}", act);
+                                warn!("Unknown or unstable technology: {}", act);
                                 continue;
                             }
                         }
                     }
                     Err(e) => {
-                        log::error!("Network info error: {:?}", e);
+                        error!("Network info error: {:?}", e);
                     }
                 }
             }
@@ -1035,7 +1039,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             {
                 match self.client.send(&GetCopsInfo).await {
                     Ok(info) => {
-                        log::info!("Network info: {:?}", info);
+                        info!("Network info: {:?}", info);
 
                         // 1. Normalize the integer technology code into a string
                         // 0,3 = GSM/2G | 7,8 = LTE/Cat-M1 | 9 = NB-IoT
@@ -1048,7 +1052,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
 
                         // 2. Handle "SEARCH" or "No Service"
                         if act == "SEARCH" {
-                            log::debug!("Searching...");
+                            debug!("Searching...");
                             continue;
                         }
 
@@ -1057,29 +1061,29 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                             "LTE" => {
                                 self.mode = ModemMode::LTEM;
                                 let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
-                                log::info!("Using LTE after {} s", t.as_secs());
+                                info!("Using LTE after {} s", t.as_secs());
                                 return Ok(t);
                             }
                             "GSM" => {
                                 self.mode = ModemMode::EDGE;
                                 let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
-                                log::info!("Using 2G after {} s", t.as_secs());
+                                info!("Using 2G after {} s", t.as_secs());
                                 return Ok(t);
                             }
                             "NBIoT" => {
                                 self.mode = ModemMode::NBIoT;
                                 let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
-                                log::info!("Using NB-IoT after {} s", t.as_secs());
+                                info!("Using NB-IoT after {} s", t.as_secs());
                                 return Ok(t);
                             }
                             _ => {
-                                log::warn!("Unknown or unstable technology code: {}", act);
+                                warn!("Unknown or unstable technology code: {}", act);
                                 continue;
                             }
                         }
                     }
                     Err(e) => {
-                        log::error!("Network info error: {:?}", e);
+                        error!("Network info error: {:?}", e);
                     }
                 }
             }
@@ -1125,11 +1129,11 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             .await
         {
             Ok(_) => {
-                log::info!("Context configuration set");
+                info!("Context configuration set");
                 Ok(())
             }
             Err(e) => {
-                log::error!("Context configuration not set: {:?}", e);
+                error!("Context configuration not set: {:?}", e);
                 Err(ModemError::NotResponding)
             }
         }
@@ -1146,7 +1150,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             .await
         {
             Ok(_) => {
-                log::info!("Context deactivated");
+                info!("Context deactivated");
             }
             Err(e) => {}
         }
@@ -1157,19 +1161,19 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             .await
         {
             Ok(_) => {
-                log::info!("Context activated");
+                info!("Context activated");
             }
             Err(e) => {
-                log::error!("Context not activated: {:?}", e);
+                error!("Context not activated: {:?}", e);
                 return Err(ModemError::NotResponding);
             }
         }
 
         match self.client.send(&GetPDPContextInfo {}).await {
             Ok(status) => {
-                log::info!("Context status: {:?}", status);
+                info!("Context status: {:?}", status);
                 let t = core::time::Duration::from_millis(compat::elapsed_ms(now));
-                log::info!(
+                info!(
                     "IP {:?} obtained after {} s",
                     status.ip_address,
                     t.as_secs()
@@ -1177,7 +1181,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 Ok(t)
             }
             Err(e) => {
-                log::error!("Context status not found: {:?}", e);
+                error!("Context status not found: {:?}", e);
                 Err(ModemError::NoContext)
             }
         }
@@ -1192,11 +1196,11 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             .await
         {
             Ok(_) => {
-                log::info!("Context deactivated");
+                info!("Context deactivated");
                 Ok(())
             }
             Err(e) => {
-                log::error!("Context not deactivated: {:?}", e);
+                error!("Context not deactivated: {:?}", e);
                 Err(ModemError::NotResponding)
             }
         }
@@ -1279,10 +1283,10 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             .await
         {
             Ok(_) => {
-                log::info!("Connected to MQTT broker");
+                info!("Connected to MQTT broker");
             }
             Err(e) => {
-                log::error!("MQTT broker not connected: {:?}", e);
+                error!("MQTT broker not connected: {:?}", e);
                 return Err(ModemError::NotResponding);
             }
         }
@@ -1293,44 +1297,44 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
 
             match subscriber.try_next_message_pure() {
                 Some(Urc::MqttOpen(mqtopen_response)) => {
-                    log::info!("MQTT Open response: result={}", mqtopen_response.result);
+                    info!("MQTT Open response: result={}", mqtopen_response.result);
                     match mqtopen_response.result {
                         0 => {
-                            log::info!("Connection opened");
+                            info!("Connection opened");
                             break;
                         }
                         -1 => {
-                            log::error!("MQTT Open failed: network connection failed");
+                            error!("MQTT Open failed: network connection failed");
                             return Err(ModemError::NoNetwork);
                         }
                         1 => {
-                            log::error!("MQTT Open failed: wrong parameter");
+                            error!("MQTT Open failed: wrong parameter");
                             return Err(ModemError::MqttRequestFailed);
                         }
                         2 => {
-                            log::error!("MQTT Open failed: MQTT identifier occupied");
+                            error!("MQTT Open failed: MQTT identifier occupied");
                             return Err(ModemError::MqttRequestFailed);
                         }
                         3 => {
-                            log::error!("MQTT Open failed: PDP activation failed");
+                            error!("MQTT Open failed: PDP activation failed");
                             return Err(ModemError::NoContext);
                         }
                         4 => {
-                            log::error!("MQTT Open failed: DNS parse failed");
+                            error!("MQTT Open failed: DNS parse failed");
                             if port == 8883 {
                                 return Err(ModemError::SslHostnameMismatch);
                             }
                             return Err(ModemError::MqttRequestFailed);
                         }
                         5 => {
-                            log::error!("MQTT Open failed: network disconnection");
+                            error!("MQTT Open failed: network disconnection");
                             if port == 8883 {
                                 return Err(ModemError::SslCertificateInvalid);
                             }
                             return Err(ModemError::NoNetwork);
                         }
                         _ => {
-                            log::error!(
+                            error!(
                                 "MQTT Open failed with unknown result={}",
                                 mqtopen_response.result
                             );
@@ -1342,10 +1346,10 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                     }
                 }
                 Some(_) => {
-                    log::debug!("Received other URC, waiting for MQTT Open");
+                    debug!("Received other URC, waiting for MQTT Open");
                 }
                 None => {
-                    log::debug!("Waiting for response...");
+                    debug!("Waiting for response...");
                 }
             }
         }
@@ -1361,10 +1365,10 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             .await
         {
             Ok(_) => {
-                log::info!("Connected to MQTT broker");
+                info!("Connected to MQTT broker");
             }
             Err(e) => {
-                log::error!("MQTT broker not connected: {:?}", e);
+                error!("MQTT broker not connected: {:?}", e);
                 return Err(ModemError::NotResponding);
             }
         }
@@ -1374,43 +1378,40 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             compat::delay_ms(500).await;
             match subscriber.try_next_message_pure() {
                 Some(Urc::MqttConnect(mqtconnect_response)) => {
-                    log::info!(
+                    info!(
                         "MQTT Connect response: result={}, ret_code={}",
-                        mqtconnect_response.result,
-                        mqtconnect_response.ret_code
+                        mqtconnect_response.result, mqtconnect_response.ret_code
                     );
                     match mqtconnect_response.result {
                         0 => {
                             // Packet sent successfully, now check ret_code
                             match mqtconnect_response.ret_code {
                                 0 => {
-                                    log::info!("Client connected");
+                                    info!("Client connected");
                                     break;
                                 }
                                 1 => {
-                                    log::error!(
-                                        "Connection refused: unacceptable protocol version"
-                                    );
+                                    error!("Connection refused: unacceptable protocol version");
                                     return Err(ModemError::MqttRequestFailed);
                                 }
                                 2 => {
-                                    log::error!("Connection refused: identifier rejected");
+                                    error!("Connection refused: identifier rejected");
                                     return Err(ModemError::MqttRequestFailed);
                                 }
                                 3 => {
-                                    log::error!("Connection refused: server unavailable");
+                                    error!("Connection refused: server unavailable");
                                     return Err(ModemError::MqttRequestFailed);
                                 }
                                 4 => {
-                                    log::error!("Connection refused: bad user name or password");
+                                    error!("Connection refused: bad user name or password");
                                     return Err(ModemError::MqttRequestFailed);
                                 }
                                 5 => {
-                                    log::error!("Connection refused: not authorized");
+                                    error!("Connection refused: not authorized");
                                     return Err(ModemError::MqttRequestFailed);
                                 }
                                 _ => {
-                                    log::error!(
+                                    error!(
                                         "Connection refused with unknown ret_code={}",
                                         mqtconnect_response.ret_code
                                     );
@@ -1419,7 +1420,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                             }
                         }
                         _ => {
-                            log::error!(
+                            error!(
                                 "MQTT Connect failed with result={}",
                                 mqtconnect_response.result
                             );
@@ -1428,10 +1429,10 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                     }
                 }
                 Some(_) => {
-                    log::debug!("Received other URC, waiting for MQTT Connect");
+                    debug!("Received other URC, waiting for MQTT Connect");
                 }
                 None => {
-                    log::debug!("Waiting for response...");
+                    debug!("Waiting for response...");
                 }
             }
         }
@@ -1449,10 +1450,10 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             .await
         {
             Ok(_) => {
-                log::info!("Disconnected from MQTT broker");
+                info!("Disconnected from MQTT broker");
             }
             Err(e) => {
-                log::error!("MQTT broker not disconnected: {:?}", e);
+                error!("MQTT broker not disconnected: {:?}", e);
                 return Err(ModemError::NotResponding);
             }
         }
@@ -1462,17 +1463,17 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             compat::delay_ms(500).await;
             match subscriber.try_next_message_pure() {
                 Some(Urc::MqttDisconnect(mqtdisconnect_response)) => {
-                    log::info!(
+                    info!(
                         "MQTT Disconnect response: result={}",
                         mqtdisconnect_response.result
                     );
                     match mqtdisconnect_response.result {
                         0 => {
-                            log::info!("Client disconnected");
+                            info!("Client disconnected");
                             break;
                         }
                         _ => {
-                            log::error!(
+                            error!(
                                 "MQTT Disconnect failed with result={}",
                                 mqtdisconnect_response.result
                             );
@@ -1481,10 +1482,10 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                     }
                 }
                 Some(_) => {
-                    log::debug!("Received other URC, waiting for MQTT Disconnect");
+                    debug!("Received other URC, waiting for MQTT Disconnect");
                 }
                 None => {
-                    log::debug!("Waiting for response...");
+                    debug!("Waiting for response...");
                 }
             }
         }
@@ -1495,36 +1496,33 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 compat::delay_ms(500).await;
                 match subscriber.try_next_message_pure() {
                     Some(Urc::MqttStatus(mqttstatus_response)) => {
-                        log::info!("MQTT Status response: err={}", mqttstatus_response.err);
+                        info!("MQTT Status response: err={}", mqttstatus_response.err);
                         match mqttstatus_response.err {
                             5 => {
-                                log::info!("Client disconnected");
+                                info!("Client disconnected");
                                 return Ok(());
                             }
                             _ => {
-                                log::error!(
-                                    "MQTT Status failed with err={}",
-                                    mqttstatus_response.err
-                                );
+                                error!("MQTT Status failed with err={}", mqttstatus_response.err);
                                 return Err(ModemError::MqttRequestFailed);
                             }
                         }
                     }
                     Some(_) => {
-                        log::debug!("Received other URC, waiting for MQTT Status");
+                        debug!("Received other URC, waiting for MQTT Status");
                     }
                     None => {
-                        log::debug!("Waiting for response...");
+                        debug!("Waiting for response...");
                     }
                 }
             }
 
             match self.client.send(&MqttClose { tcp_connect_id: 0 }).await {
                 Ok(_) => {
-                    log::info!("Disconnected from MQTT broker");
+                    info!("Disconnected from MQTT broker");
                 }
                 Err(e) => {
-                    log::error!("MQTT broker not disconnected: {:?}", e);
+                    error!("MQTT broker not disconnected: {:?}", e);
                     return Err(ModemError::NotResponding);
                 }
             }
@@ -1534,14 +1532,14 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 compat::delay_ms(500).await;
                 match subscriber.try_next_message_pure() {
                     Some(Urc::MqttClose(mqtclose_response)) => {
-                        log::info!("MQTT Close response: result={}", mqtclose_response.result);
+                        info!("MQTT Close response: result={}", mqtclose_response.result);
                         match mqtclose_response.result {
                             0 => {
-                                log::info!("Connection closed");
+                                info!("Connection closed");
                                 return Ok(());
                             }
                             _ => {
-                                log::error!(
+                                error!(
                                     "MQTT Close failed with result={}",
                                     mqtclose_response.result
                                 );
@@ -1550,10 +1548,10 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                         }
                     }
                     Some(_) => {
-                        log::debug!("Received other URC, waiting for MQTT Close");
+                        debug!("Received other URC, waiting for MQTT Close");
                     }
                     None => {
-                        log::debug!("Waiting for response...");
+                        debug!("Waiting for response...");
                     }
                 }
             }
@@ -1586,10 +1584,10 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             .await
         {
             Ok(_) => {
-                log::info!("Published to MQTT broker");
+                info!("Published to MQTT broker");
             }
             Err(e) => {
-                log::error!("MQTT broker not published: {:?}", e);
+                error!("MQTT broker not published: {:?}", e);
                 return Err(ModemError::NotResponding);
             }
         }
@@ -1599,17 +1597,17 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             compat::delay_ms(500).await;
             match subscriber.try_next_message_pure() {
                 Some(Urc::MqttPublish(mqtpublish_response)) => {
-                    log::info!(
+                    info!(
                         "MQTT Publish response: result={}",
                         mqtpublish_response.result
                     );
                     match mqtpublish_response.result {
                         0 => {
-                            log::info!("Publishing successful");
+                            info!("Publishing successful");
                             break;
                         }
                         _ => {
-                            log::error!(
+                            error!(
                                 "Publishing failed with result={}",
                                 mqtpublish_response.result
                             );
@@ -1618,10 +1616,10 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                     }
                 }
                 Some(_) => {
-                    log::debug!("Received other URC, waiting for MQTT Publish");
+                    debug!("Received other URC, waiting for MQTT Publish");
                 }
                 None => {
-                    log::debug!("Waiting for response...");
+                    debug!("Waiting for response...");
                 }
             }
         }
@@ -1733,7 +1731,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 .await
             {
                 Ok(_) => {
-                    log::trace!("Sent {} bytes on socket {}", chunk.len(), client_id);
+                    trace!("Sent {} bytes on socket {}", chunk.len(), client_id);
                 }
                 Err(e) => {
                     error!("QSSLSEND payload failed on socket {}: {:?}", client_id, e);
@@ -1893,7 +1891,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 .await
             {
                 Ok(_) => {
-                    log::trace!("Sent {} bytes on TCP socket {}", chunk.len(), client_id);
+                    trace!("Sent {} bytes on TCP socket {}", chunk.len(), client_id);
                 }
                 Err(e) => {
                     error!("QISEND payload failed on socket {}: {:?}", client_id, e);
@@ -1996,7 +1994,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         match self.client.send(&ConfigureGnssPriorityMode).await {
             Ok(_) => {}
             Err(e) => {
-                log::error!("Setting GNSS priority failed ({:?})", e);
+                error!("Setting GNSS priority failed ({:?})", e);
                 return Err(ModemError::NotResponding);
             }
         }
@@ -2011,7 +2009,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         {
             Ok(_) => {}
             Err(e) => {
-                log::error!("Setting GNSS constellation failed ({:?})", e);
+                error!("Setting GNSS constellation failed ({:?})", e);
                 return Err(ModemError::NotResponding);
             }
         }
@@ -2032,7 +2030,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         {
             Ok(_) => Ok(()),
             Err(e) => {
-                log::error!("Unable to turn on GNSS ({:?})", e);
+                error!("Unable to turn on GNSS ({:?})", e);
                 Err(ModemError::NotResponding)
             }
         }
@@ -2042,7 +2040,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         match self.client.send(&TurnOffGnss).await {
             Ok(_) => Ok(()),
             Err(e) => {
-                log::error!("Unable to turn on GNSS ({:?})", e);
+                error!("Unable to turn on GNSS ({:?})", e);
                 Err(ModemError::NotResponding)
             }
         }
@@ -2065,7 +2063,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         match self.client.send(&GetGnssPositionInformation).await {
             Ok(data) => Ok(data),
             Err(e) => {
-                log::error!("Unexpected error occurred: {:?}", e);
+                error!("Unexpected error occurred: {:?}", e);
                 Err(ModemError::NotResponding)
             }
         }
@@ -2084,7 +2082,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         {
             Ok(_) => Ok(()),
             Err(e) => {
-                log::error!("Unable to delete file ({:?})", e);
+                error!("Unable to delete file ({:?})", e);
                 Err(ModemError::FileDeletionFailed)
             }
         }
@@ -2381,7 +2379,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 Ok(files)
             }
             Err(e) => {
-                log::error!("Unable to list files ({:?})", e);
+                error!("Unable to list files ({:?})", e);
                 Err(ModemError::NotResponding)
             }
         }
@@ -2414,7 +2412,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             Ok(response) => {
                 // Check if we got exactly one file
                 if response.files.is_empty() {
-                    log::error!("File not found: {}", filename);
+                    error!("File not found: {}", filename);
                     return Err(ModemError::FileUploadFailed);
                 }
 
@@ -2423,7 +2421,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 Ok((entry.filename.clone(), entry.file_size))
             }
             Err(e) => {
-                log::error!("Unable to get file metadata ({:?})", e);
+                error!("Unable to get file metadata ({:?})", e);
                 Err(ModemError::NotResponding)
             }
         }
@@ -2463,7 +2461,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         {
             Ok(_) => {}
             Err(_e) => {
-                // log::error!("Unable to start file upload ({:?})", e);
+                // error!("Unable to start file upload ({:?})", e);
                 // return Err(ModemError::NotResponding);
             }
         }
@@ -2474,7 +2472,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
 
         // Uploading file contents. It must be done in chunks of less than INGRESS_BUFFER_SIZE.
         // We don't know the exact size of the ingress buffer, so we use 128 bytes as a safe value.
-        log::trace!("Uploading file...");
+        trace!("Uploading file...");
         for chunk in data.chunks(256) {
             match self
                 .client
@@ -2484,10 +2482,10 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 .await
             {
                 Ok(_) => {
-                    log::trace!("Uploaded {} bytes", chunk.len());
+                    trace!("Uploaded {} bytes", chunk.len());
                 }
                 Err(e) => {
-                    log::error!("Error uploading file chunk ({:?})", e);
+                    error!("Error uploading file chunk ({:?})", e);
                     return Err(ModemError::FileUploadFailed);
                 }
             }
@@ -2500,17 +2498,17 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             compat::delay_ms(500).await;
             match subscriber.try_next_message_pure() {
                 Some(Urc::FileUploadDone(upload_response)) => {
-                    log::debug!("File Upload response: {:?}", upload_response);
+                    debug!("File Upload response: {:?}", upload_response);
                     if upload_response.upload_size != len {
-                        log::error!("Upload size mismatch");
+                        error!("Upload size mismatch");
                         return Err(ModemError::FileUploadFailed);
                     }
                 }
                 Some(e) => {
-                    log::error!("Unknown URC {:?}", e);
+                    error!("Unknown URC {:?}", e);
                 }
                 None => {
-                    log::debug!("Waiting for response...");
+                    debug!("Waiting for response...");
                 }
             }
         }
@@ -2553,16 +2551,15 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             .await
         {
             Ok(response) => {
-                log::info!(
+                info!(
                     "File download completed: size={}, checksum={}",
-                    response.download_size,
-                    response.checksum
+                    response.download_size, response.checksum
                 );
 
                 let downloaded_size = response.download_size as usize;
 
                 if downloaded_size > buffer.len() {
-                    log::error!("Buffer too small for downloaded file");
+                    error!("Buffer too small for downloaded file");
                     return Err(ModemError::FileUploadFailed);
                 }
 
@@ -2578,7 +2575,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 Ok(downloaded_size)
             }
             Err(e) => {
-                log::error!("Unable to download file ({:?})", e);
+                error!("Unable to download file ({:?})", e);
                 Err(ModemError::NotResponding)
             }
         }
@@ -2613,11 +2610,11 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             .await
         {
             Ok(response) => {
-                log::info!("File opened with handle: {}", response.filehandle);
+                info!("File opened with handle: {}", response.filehandle);
                 response.filehandle
             }
             Err(e) => {
-                log::error!("Unable to open file ({:?})", e);
+                error!("Unable to open file ({:?})", e);
                 return Err(ModemError::FileUploadFailed);
             }
         };
@@ -2640,7 +2637,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 .await
             {
                 Ok(response) => {
-                    log::info!("Read {} bytes from file", response.read_length);
+                    info!("Read {} bytes from file", response.read_length);
 
                     // Check if we reached end of file
                     if response.read_length == 0 {
@@ -2663,7 +2660,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                     }
                 }
                 Err(e) => {
-                    log::error!("Unable to read file ({:?})", e);
+                    error!("Unable to read file ({:?})", e);
                     // Close the file even if read failed
                     let _ = self.client.send(&CloseFile { filehandle }).await;
                     return Err(ModemError::FileUploadFailed);
@@ -2674,10 +2671,10 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         // Close the file
         match self.client.send(&CloseFile { filehandle }).await {
             Ok(_) => {
-                log::info!("File closed, read {} bytes total", total_bytes_read);
+                info!("File closed, read {} bytes total", total_bytes_read);
             }
             Err(e) => {
-                log::error!("Unable to close file ({:?})", e);
+                error!("Unable to close file ({:?})", e);
                 return Err(ModemError::FileUploadFailed);
             }
         }
@@ -2714,11 +2711,11 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             .await
         {
             Ok(response) => {
-                log::debug!("File opened with handle: {}", response.filehandle);
+                debug!("File opened with handle: {}", response.filehandle);
                 response.filehandle
             }
             Err(e) => {
-                log::error!("Unable to open file ({:?})", e);
+                error!("Unable to open file ({:?})", e);
                 return Err(ModemError::FileUploadFailed);
             }
         };
@@ -2746,7 +2743,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
 
         // Uploading file contents. It must be done in chunks of less than INGRESS_BUFFER_SIZE.
         // We don't know the exact size of the ingress buffer, so we use 128 bytes as a safe value.
-        log::trace!("Uploading file...");
+        trace!("Uploading file...");
         for chunk in data.chunks(256) {
             match self
                 .client
@@ -2756,10 +2753,10 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
                 .await
             {
                 Ok(_) => {
-                    log::trace!("Uploaded {} bytes", chunk.len());
+                    trace!("Uploaded {} bytes", chunk.len());
                 }
                 Err(e) => {
-                    log::error!("Error uploading file chunk ({:?})", e);
+                    error!("Error uploading file chunk ({:?})", e);
                     return Err(ModemError::FileUploadFailed);
                 }
             }
@@ -2774,21 +2771,20 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
             compat::delay_ms(100).await;
             match subscriber.try_next_message_pure() {
                 Some(Urc::FileWriteDone(write_response)) => {
-                    log::info!(
+                    info!(
                         "File write completed: written={}, total={}",
-                        write_response.written_length,
-                        write_response.total_length
+                        write_response.written_length, write_response.total_length
                     );
 
                     if write_response.written_length != data.len() as u32 {
-                        log::error!("Write size mismatch");
+                        error!("Write size mismatch");
                         let _ = self.client.send(&CloseFile { filehandle }).await;
                         return Err(ModemError::FileUploadFailed);
                     }
                     break;
                 }
                 Some(e) => {
-                    log::debug!("Received URC: {:?}", e);
+                    debug!("Received URC: {:?}", e);
                 }
                 None => {
                     // Continue waiting
@@ -2799,11 +2795,11 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         // Close the file
         match self.client.send(&CloseFile { filehandle }).await {
             Ok(_) => {
-                log::debug!("File closed");
+                debug!("File closed");
                 Ok(())
             }
             Err(e) => {
-                log::error!("Unable to close file ({:?})", e);
+                error!("Unable to close file ({:?})", e);
                 Err(ModemError::FileUploadFailed)
             }
         }
@@ -2818,13 +2814,18 @@ fn get_timestamp_from_ntp_response(dt_str: &str) -> Result<i64, ModemError> {
         "[year]/[month]/[day],[hour]:[minute]:[second][ignore count:1][ignore count:2]"
     );
     let dt = time::PrimitiveDateTime::parse(dt_str, fd).map_err(|e| {
-        log::error!("Failed to parse date time string: {:?}", e);
+        #[cfg(feature = "defmt")]
+        error!("Failed to parse date time string: {:#?}", Debug2Format(&e));
+
+        #[cfg(not(feature = "defmt"))]
+        error!("Failed to parse date time string: {:?}", e);
+
         ModemError::NtpRequestFailed
     })?;
     let dt = dt.assume_offset(time::UtcOffset::UTC);
 
     let ts = dt.unix_timestamp();
-    log::info!("Timestamp: {}", ts);
+    info!("Timestamp: {}", ts);
 
     Ok(ts)
 }
@@ -2841,7 +2842,7 @@ fn get_timestamp_from_nitz_response(nitz_str: &str) -> Result<i64, ModemError> {
     let dt = dt.assume_offset(time::UtcOffset::UTC);
 
     let ts = dt.unix_timestamp();
-    log::info!("Timestamp: {}", ts);
+    info!("Timestamp: {}", ts);
     Ok(ts)
 }
 
@@ -2914,5 +2915,6 @@ mod tests {
         // This will print the detailed internal Serde error (e.g., TypeMismatch, InvalidDigit)
         // and often the exact index where it failed!
         println!("Detailed Parser Result: {:#?}", result);
+        result.unwrap();
     }
 }

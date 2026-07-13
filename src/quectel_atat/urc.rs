@@ -3,6 +3,7 @@ use atat::atat_derive::AtatUrc;
 use crate::quectel_atat::responses::*;
 
 #[derive(Clone, AtatUrc, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Urc {
     #[at_urc("APP RDY")]
     Ready,

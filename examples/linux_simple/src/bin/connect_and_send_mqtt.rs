@@ -1,14 +1,14 @@
 
 use std::{env, thread, time};
 
-use quectel_bg9x_eh_driver::cellular::{
+use modem_manager_rs::cellular::{
     QuectelBG9X, INGRESS_BUF_SIZE, URC_CAPACITY, URC_SUBSCRIBERS,
 };
-use quectel_bg9x_eh_driver::quectel_atat::types::{
+use modem_manager_rs::quectel_atat::types::{
     EmtcBands, GsmBands, ModemConfiguration, NbIotBands, RadioAccessTechnology,
     SslAuthenticationMode, SslCipherSuiteEnum, SslConfiguration, SslVersion, AuthenticationMethod,
 };
-use quectel_bg9x_eh_driver::quectel_atat::urc::Urc;
+use modem_manager_rs::quectel_atat::urc::Urc;
 
 use atat::blocking::Client;
 use atat::AtatIngress;

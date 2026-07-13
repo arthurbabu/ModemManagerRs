@@ -35,7 +35,7 @@
 //! use embassy_sync::mutex::Mutex;
 //! use embedded_nal_async::TcpConnect;
 //! use embedded_io_async::{Read, Write};
-//! use quectel_bg9x_eh_driver::Transport;
+//! use modem_manager_rs::Transport;
 //!
 //! // `modem` is a fully-initialised, network-attached QuectelBG9X.
 //! let modem: Mutex<NoopRawMutex, _> = Mutex::new(modem);
@@ -80,6 +80,19 @@ impl From<ModemError> for SocketError {
         Self(e)
     }
 }
+
+// 1. Implement Display (required by the Error trait)
+impl core::fmt::Display for SocketError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // You can format this differently if ModemError implements Display
+        write!(f, "Modem socket error")
+    }
+}
+
+// 2. Implement the standard Error trait
+// Note: If you are on an older Rust version without core::error::Error stabilized,
+// you may need to use `std::error::Error` instead.
+impl core::error::Error for SocketError {}
 
 impl IoError for SocketError {
     fn kind(&self) -> ErrorKind {
@@ -214,6 +227,10 @@ impl<M: RawMutex, W: Write, P: OutputPin> Write for ModemSocket<'_, M, W, P> {
             Transport::Tls { .. } => modem.ssl_socket_send(self.client_id, buf).await?,
         }
         Ok(buf.len())
+    }
+
+    async fn flush(&mut self) -> Result<(), <Self as embedded_io::ErrorType>::Error> {
+        todo!()
     }
 }
 

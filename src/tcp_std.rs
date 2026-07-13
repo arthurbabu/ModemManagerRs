@@ -36,8 +36,8 @@
 //! ```ignore
 //! use std::cell::RefCell;
 //! use std::io::{Read, Write};
-//! use quectel_bg9x_eh_driver::Transport;
-//! use quectel_bg9x_eh_driver::tcp_std::QuectelTcpClient;
+//! use modem_manager_rs::Transport;
+//! use modem_manager_rs::tcp_std::QuectelTcpClient;
 //!
 //! // `modem` is a fully-initialised, network-attached QuectelBG9X.
 //! let modem = RefCell::new(modem);

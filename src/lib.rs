@@ -58,6 +58,7 @@ pub mod tcp;
 pub mod tcp_std;
 
 #[derive(Debug, Error)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ModemError {
     #[error("Modem not responding")]
     NotResponding,

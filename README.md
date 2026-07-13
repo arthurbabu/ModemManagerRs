@@ -12,7 +12,7 @@ The main features are:
   [`embedded-nal-async`](https://docs.rs/embedded-nal-async) traits (async /
   `embassy` only)
 
-The crate is available on [crates.io](https://crates.io/crates/quectel-bg9x-eh-driver).
+The crate is available on [crates.io](https://crates.io/crates/modem-manager-rs).
 
 ## Crate configuration
 
@@ -47,10 +47,10 @@ macro produces the blocking version under `std` and the async version under
 
 ```toml
 # Blocking, on a host (default):
-quectel-bg9x-eh-driver = "0.4"
+modem-manager-rs = "0.4"
 
 # Async, on an embedded target with Embassy:
-quectel-bg9x-eh-driver = { version = "0.4", default-features = false, features = ["bg95", "embassy"] }
+modem-manager-rs = { version = "0.4", default-features = false, features = ["bg95", "embassy"] }
 ```
 
 Building with both runtimes, or with neither, is a compile error.

@@ -1,18 +1,18 @@
 //! Wrap the modem as a **standard TCP socket** and do an HTTP GET through it.
 //!
-//! This demonstrates [`quectel_bg9x_eh_driver::tcp_std`], the blocking socket
+//! This demonstrates [`modem_manager_rs::tcp_std`], the blocking socket
 //! wrapper (the `std`/tokio-style counterpart of the embassy `embedded-nal-async`
-//! wrapper in `quectel_bg9x_eh_driver::tcp`). The modem is shared behind a
+//! wrapper in `modem_manager_rs::tcp`). The modem is shared behind a
 //! `RefCell` and handed to a [`QuectelTcpClient`]; each `connect` returns a
 //! [`QuectelTcpStream`] that implements [`std::io::Read`]/[`Write`] — so the HTTP
 //! request/response below is written with the exact same calls you'd use on a
 //! `std::net::TcpStream`.
 //!
 //! The same [`QuectelTcpStream`] also implements the `embedded_io` blocking
-//! traits, and [`quectel_bg9x_eh_driver::tcp_std::QuectelTcpStack`] implements
+//! traits, and [`modem_manager_rs::tcp_std::QuectelTcpStack`] implements
 //! `embedded_nal::TcpClientStack` (see [`run_via_embedded_nal`] at the bottom for
 //! that surface). Pick the transport per connection with
-//! [`Transport`](quectel_bg9x_eh_driver::Transport): `Tcp` (plain) or
+//! [`Transport`](modem_manager_rs::Transport): `Tcp` (plain) or
 //! `Tls { ssl_ctx_id }` (modem-terminated TLS).
 //!
 //! Usage:
@@ -27,13 +27,13 @@ use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::{env, thread, time};
 
-use quectel_bg9x_eh_driver::cellular::{
+use modem_manager_rs::cellular::{
     socket_recv_digest_hook, QuectelBG9X, INGRESS_BUF_SIZE, URC_CAPACITY, URC_SUBSCRIBERS,
 };
-use quectel_bg9x_eh_driver::quectel_atat::types::{AuthenticationMethod, ModemConfiguration};
-use quectel_bg9x_eh_driver::quectel_atat::urc::Urc;
-use quectel_bg9x_eh_driver::tcp_std::QuectelTcpClient;
-use quectel_bg9x_eh_driver::Transport;
+use modem_manager_rs::quectel_atat::types::{AuthenticationMethod, ModemConfiguration};
+use modem_manager_rs::quectel_atat::urc::Urc;
+use modem_manager_rs::tcp_std::QuectelTcpClient;
+use modem_manager_rs::Transport;
 
 use atat::blocking::Client;
 use atat::AtatIngress;
@@ -185,7 +185,7 @@ fn main() {
 
     // Build and send a minimal HTTP/1.1 request using std::io::Write.
     let request = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: quectel-bg9x-eh-driver\r\n\
+        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: modem_manager_rs\r\n\
          Accept: */*\r\nConnection: close\r\n\r\n",
         CONFIG.tcp_path, CONFIG.tcp_host
     );
@@ -227,7 +227,7 @@ fn run_via_embedded_nal<W: embedded_io::Write, P: embedded_hal::digital::OutputP
 ) {
     use core::net::SocketAddr;
     use embedded_nal::TcpClientStack;
-    use quectel_bg9x_eh_driver::tcp_std::QuectelTcpStack;
+    use modem_manager_rs::tcp_std::QuectelTcpStack;
 
     let mut stack = QuectelTcpStack::new(modem, Transport::Tcp);
     let mut socket = stack.socket().unwrap();

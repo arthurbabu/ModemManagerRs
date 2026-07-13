@@ -7,18 +7,21 @@ edition = "2021"
 log = { version = "0.4.20" }
 env_logger = "0.11.3"
 serialport = "4.4.0"
-atat = { version = "0.24.1", features = [
+
+atat = { git="https://github.com/arthurbabu/atat.git", features = [
     "derive",
     "bytes",
     "hex_str_arrays",
     "log",
 ] }
+
 # This example targets the EG916U (LTE Cat 1bis). `default-features = false` is
 # required so the crate's default `bg95` chip is not also enabled (chips are
 # mutually exclusive); re-add the blocking `std` runtime explicitly.
-quectel-bg9x-eh-driver = { path = "../../", default-features = false, features = [
+modem-manager-rs = { path = "../../", default-features = false, features = [
     "eg916u",
     "std",
+    "log",
 ] }
 static_cell = "2.1.0"
 critical-section = { version = "1.1.2", features = ["std"] }
@@ -27,8 +30,8 @@ embedded-hal = "1.0.0"
 # `TcpClientStack` surface of the modem socket wrapper.
 embedded-nal = "0.9.0"
 nb = "1"
-embedded-io = { version = "0.6.1", features = ["std"] }
-embedded-io-adapters = { version = "0.6.1", features = ["std"] }
-embassy-time = { version = "0.4.0", features = ["std", "generic-queue-8"] }
+embedded-io = { version = "0.7.1", features = ["std"] }
+embedded-io-adapters = { version = "0.7.0", features = ["std"] }
+embassy-time = { version = "0.5.1", features = ["std", "generic-queue-8"] }
 toml-cfg = "0.2.0"
 embedded-hal-mock = "0.11.1"

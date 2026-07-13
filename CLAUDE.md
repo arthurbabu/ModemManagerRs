@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`quectel-bg9x-eh-driver` — a Rust `embedded-hal` driver for the Quectel BG95/BG96 cellular modems, built on top of the [`atat`](https://docs.rs/atat) AT-command crate. It supports two mutually exclusive runtime backends selected by feature: a **blocking `std`** backend (default) and an **async `no_std` embassy** backend.
+`modem-manager-rs` — a Rust `embedded-hal` driver for the Quectel BG95/BG96 cellular modems, built on top of the [`atat`](https://docs.rs/atat) AT-command crate. It supports two mutually exclusive runtime backends selected by feature: a **blocking `std`** backend (default) and an **async `no_std` embassy** backend.
 
 ## Commands
 
