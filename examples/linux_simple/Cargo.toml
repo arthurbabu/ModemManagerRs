@@ -6,7 +6,8 @@ edition = "2021"
 [dependencies]
 log = { version = "0.4.20" }
 env_logger = "0.11.3"
-serialport = "4.4.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "io-util", "net"] }
+tokio-serial = "5.4.5"
 
 atat = { git="https://github.com/arthurbabu/atat.git", features = [
     "derive",
@@ -17,21 +18,25 @@ atat = { git="https://github.com/arthurbabu/atat.git", features = [
 
 # This example targets the EG916U (LTE Cat 1bis). `default-features = false` is
 # required so the crate's default `bg95` chip is not also enabled (chips are
-# mutually exclusive); re-add the blocking `std` runtime explicitly.
+# mutually exclusive); re-add the (now async, tokio-driven) `std` runtime
+# explicitly.
 modem-manager-rs = { path = "../../", default-features = false, features = [
     "eg916u",
     "std",
     "log",
 ] }
 static_cell = "2.1.0"
+# Required by `embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex`,
+# used by the `tcp_socket` example to share the modem safely across tokio's
+# multi-threaded runtime.
 critical-section = { version = "1.1.2", features = ["std"] }
 embedded-hal = "1.0.0"
-# Used by the `tcp_socket` example to demonstrate the embedded-nal blocking
-# `TcpClientStack` surface of the modem socket wrapper.
-embedded-nal = "0.9.0"
-nb = "1"
-embedded-io = { version = "0.7.1", features = ["std"] }
-embedded-io-adapters = { version = "0.7.0", features = ["std"] }
+# The `tcp_socket` example shares the modem behind this async Mutex and drives
+# the socket through these async traits.
+embassy-sync = "0.8.0"
+embedded-io-async = "0.7.0"
+embedded-nal-async = "0.9.0"
+embedded-io-adapters = { version = "0.7.0", features = ["tokio-1"] }
 embassy-time = { version = "0.5.1", features = ["std", "generic-queue-8"] }
 toml-cfg = "0.2.0"
 embedded-hal-mock = "0.11.1"

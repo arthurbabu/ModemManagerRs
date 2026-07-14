@@ -1,11 +1,10 @@
-use std::{env, thread, time};
+use std::env;
+use std::time::Duration;
 
-use modem_manager_rs::cellular::{
-    QuectelBG9X, INGRESS_BUF_SIZE, URC_CAPACITY, URC_SUBSCRIBERS,
-};
+use modem_manager_rs::cellular::{QuectelBG9X, INGRESS_BUF_SIZE, URC_CAPACITY, URC_SUBSCRIBERS};
 use modem_manager_rs::quectel_atat::urc::Urc;
 
-use atat::blocking::Client;
+use atat::asynch::Client;
 use atat::AtatIngress;
 use atat::DefaultDigester;
 use atat::Ingress;
@@ -14,8 +13,9 @@ use atat::{Config as AtatConfig, ResponseSlot, UrcChannel};
 use embedded_hal_mock::eh1::digital::{
     Mock as PinMock, State as PinState, Transaction as PinTransaction,
 };
-use embedded_io::Read;
+use embedded_io_adapters::tokio_1::FromTokio;
 use static_cell::StaticCell;
+use tokio_serial::SerialPortBuilderExt;
 
 #[toml_cfg::toml_config]
 struct Config {
@@ -39,7 +39,8 @@ struct Config {
     serial_port: &'static str,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let serial_port = env::args().nth(1).expect("Usage: cargo run <device>");
     env_logger::builder()
         .filter_level(log::LevelFilter::Debug)
@@ -53,15 +54,13 @@ fn main() {
     // Create pin
     let mut modem_pwr_key = PinMock::new(&expectations);
 
-    // Open serial port
-    let serial_tx = serialport::new(serial_port, 115_200)
-        .timeout(std::time::Duration::from_millis(1000))
-        .open()
+    // Open the serial port asynchronously and split it into tx/rx halves.
+    let serial = tokio_serial::new(serial_port, 115_200)
+        .open_native_async()
         .expect("Could not open serial port");
-    let serial_rx = serial_tx.try_clone().expect("Could not clone serial port");
-
-    let serial_tx = embedded_io_adapters::std::FromStd::new(serial_tx);
-    let mut serial_rx = embedded_io_adapters::std::FromStd::new(serial_rx);
+    let (serial_rx, serial_tx) = tokio::io::split(serial);
+    let serial_tx = FromTokio::new(serial_tx);
+    let mut serial_rx = FromTokio::new(serial_rx);
 
     static INGRESS_BUF: StaticCell<[u8; INGRESS_BUF_SIZE]> = StaticCell::new();
     static RES_SLOT: ResponseSlot<INGRESS_BUF_SIZE> = ResponseSlot::new();
@@ -78,45 +77,27 @@ fn main() {
 
     let client = Client::new(serial_tx, &RES_SLOT, buf, AtatConfig::default());
 
-    log::info!("Starting ATAT loop...");
-    let _ = std::thread::spawn(move || loop {
-        let buf = ingress.write_buf();
-        match serial_rx.read(buf) {
-            Ok(len) => {
-                if len != 0 {
-                    // let s = std::str::from_utf8(&buf[..len]).unwrap();
-                    // log::debug!("Read: ({}) {}", len, s);
-                }
-                match ingress.try_advance(len) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        log::info!("Error advancing ingress {:?}", e);
-                        ingress.clear();
-                    }
-                }
-            }
-            Err(e) => {
-                if e.kind() != std::io::ErrorKind::TimedOut {
-                    log::info!("Error reading from UART: {:?}", e);
-                }
-                ingress.clear();
-            }
-        }
+    log::info!("Starting ATAT ingress task...");
+    tokio::spawn(async move {
+        ingress.read_from(&mut serial_rx).await;
     });
     // end of atat initialization
 
     log::info!("Starting ATAT client...");
-    let mut modem = match QuectelBG9X::new(modem_pwr_key.clone(), client, &URC_CHANNEL) {
+    let mut modem = match QuectelBG9X::new(modem_pwr_key.clone(), client, &URC_CHANNEL).await {
         Ok(modem) => modem,
         Err(e) => {
             log::error!("Error initializing modem: {:?}", e);
             loop {
-                thread::sleep(time::Duration::from_millis(1000));
+                tokio::time::sleep(Duration::from_millis(1000)).await;
             }
         }
     };
 
-    let files = modem.get_all_files_list_from_internal_flash().unwrap();
+    let files = modem
+        .get_all_files_list_from_internal_flash()
+        .await
+        .unwrap();
 
     println!("Files in internal flash:");
     for (filename, size) in &files {
@@ -129,17 +110,24 @@ fn main() {
         let mut file_data = vec![0u8; *size as usize];
         modem
             .read_file_from_internal_flash("cert.pem", &mut file_data)
+            .await
             .unwrap();
         let content = std::str::from_utf8(&file_data).unwrap();
         println!("cert.pem content: {}", content);
 
         println!("Deleting cert.pem...");
-        modem.delete_file_from_internal_flash("cert.pem").unwrap();
+        modem
+            .delete_file_from_internal_flash("cert.pem")
+            .await
+            .unwrap();
     } else {
         println!("cert.pem not found in internal flash.");
     }
 
-    let files = modem.get_all_files_list_from_internal_flash().unwrap();
+    let files = modem
+        .get_all_files_list_from_internal_flash()
+        .await
+        .unwrap();
 
     println!("Files in internal flash:");
     for (filename, size) in &files {
@@ -151,9 +139,13 @@ fn main() {
     let cert: &[u8] = "Adios, rios; adios, fontes;".as_bytes();
     modem
         .upload_file_to_internal_flash("cert.pem", cert)
+        .await
         .unwrap();
 
-    let files = modem.get_all_files_list_from_internal_flash().unwrap();
+    let files = modem
+        .get_all_files_list_from_internal_flash()
+        .await
+        .unwrap();
 
     println!("Files in internal flash:");
     for (filename, size) in &files {
@@ -166,11 +158,18 @@ fn main() {
     let write_data = b"Hello from write_file_to_internal_flash!\nThis is line 2.\nThis is line 3.";
     modem
         .write_file_to_internal_flash("test_write.txt", write_data)
+        .await
         .unwrap();
-    println!("Successfully wrote {} bytes to test_write.txt", write_data.len());
+    println!(
+        "Successfully wrote {} bytes to test_write.txt",
+        write_data.len()
+    );
 
     // List files again to confirm
-    let files = modem.get_all_files_list_from_internal_flash().unwrap();
+    let files = modem
+        .get_all_files_list_from_internal_flash()
+        .await
+        .unwrap();
     println!("\nFiles in internal flash after write:");
     for (filename, size) in &files {
         println!("File: {}, Size: {} bytes", filename, size);
@@ -182,8 +181,12 @@ fn main() {
     let mut read_buffer = vec![0u8; 256]; // Allocate buffer for reading
     let bytes_read = modem
         .read_file_from_internal_flash("test_write.txt", &mut read_buffer)
+        .await
         .unwrap();
-    println!("Successfully read {} bytes from test_write.txt", bytes_read);
+    println!(
+        "Successfully read {} bytes from test_write.txt",
+        bytes_read
+    );
     let content = std::str::from_utf8(&read_buffer[..bytes_read]).unwrap();
     println!("Content:\n{}", content);
     println!("\n");
@@ -193,6 +196,7 @@ fn main() {
     let append_data = b"\nAppended line 4.\nAppended line 5.";
     modem
         .write_file_to_internal_flash("test_write.txt", append_data)
+        .await
         .unwrap();
     println!("Successfully appended {} bytes", append_data.len());
 
@@ -201,6 +205,7 @@ fn main() {
     let mut read_buffer2 = vec![0u8; 512];
     let bytes_read2 = modem
         .read_file_from_internal_flash("test_write.txt", &mut read_buffer2)
+        .await
         .unwrap();
     println!("Successfully read {} bytes", bytes_read2);
     let content2 = std::str::from_utf8(&read_buffer2[..bytes_read2]).unwrap();
@@ -212,25 +217,35 @@ fn main() {
     let mut cert_buffer = vec![0u8; 128];
     let cert_bytes_read = modem
         .read_file_from_internal_flash("cert.pem", &mut cert_buffer)
+        .await
         .unwrap();
-    println!("Successfully read {} bytes from cert.pem", cert_bytes_read);
+    println!(
+        "Successfully read {} bytes from cert.pem",
+        cert_bytes_read
+    );
     let cert_content = std::str::from_utf8(&cert_buffer[..cert_bytes_read]).unwrap();
     println!("cert.pem content: {}", cert_content);
     println!("\n");
 
     // Clean up - delete test_write.txt
     println!("Cleaning up - deleting test_write.txt...");
-    modem.delete_file_from_internal_flash("test_write.txt").unwrap();
+    modem
+        .delete_file_from_internal_flash("test_write.txt")
+        .await
+        .unwrap();
 
     // Final file listing
-    let files = modem.get_all_files_list_from_internal_flash().unwrap();
+    let files = modem
+        .get_all_files_list_from_internal_flash()
+        .await
+        .unwrap();
     println!("\nFinal files in internal flash:");
     for (filename, size) in &files {
         println!("File: {}, Size: {} bytes", filename, size);
     }
     println!("\n");
 
-    modem.power_off().unwrap();
+    modem.power_off().await.unwrap();
 
     modem_pwr_key.done();
 }

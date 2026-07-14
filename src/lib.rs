@@ -1,13 +1,15 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-// Exactly one runtime backend must be selected.
+// Exactly one runtime backend must be selected. Both are async -- `std` runs
+// on a hosted OS under any executor (tokio in the examples), `embassy` runs
+// on bare-metal `no_std` under the embassy executor.
 #[cfg(all(feature = "std", feature = "embassy"))]
 compile_error!(
     "features `std` and `embassy` are mutually exclusive; enable exactly one runtime backend"
 );
 #[cfg(not(any(feature = "std", feature = "embassy")))]
 compile_error!(
-    "no runtime backend selected; enable either the `std` (blocking) or `embassy` (async) feature"
+    "no runtime backend selected; enable either the `std` (hosted, async) or `embassy` (no_std, async) feature"
 );
 
 // Exactly one chip must be selected.
@@ -47,15 +49,9 @@ pub enum Transport {
 }
 
 /// Async TCP / TLS sockets over the modem, via the `embedded-nal-async` traits.
-/// Only available with the `embassy` feature.
-#[cfg(feature = "embassy")]
+/// Available under both `std` (drive it from tokio or any other executor) and
+/// `embassy`.
 pub mod tcp;
-
-/// Blocking TCP / TLS sockets over the modem, exposing `std::io` and
-/// `embedded-io` / `embedded-nal` (blocking) interfaces. Only available with the
-/// `std` feature.
-#[cfg(feature = "std")]
-pub mod tcp_std;
 
 #[derive(Debug, Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

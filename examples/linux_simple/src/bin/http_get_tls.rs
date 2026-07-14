@@ -1,10 +1,10 @@
 //! HTTPS GET over a modem-terminated TLS socket, with **server authentication**.
 //!
 //! This talks to an HTTPS server (default `www.google.com:443`) using the
-//! modem's own TCP+TLS engine via the blocking driver methods
-//! `ssl_socket_open` / `ssl_socket_send` / `ssl_socket_recv` /
-//! `ssl_socket_close`. The modem verifies the server certificate against a CA
-//! certificate you upload to its flash (set `ca_cert_path` in `cfg.toml`).
+//! modem's own TCP+TLS engine via the async driver methods `ssl_socket_open` /
+//! `ssl_socket_send` / `ssl_socket_recv` / `ssl_socket_close`. The modem
+//! verifies the server certificate against a CA certificate you upload to its
+//! flash (set `ca_cert_path` in `cfg.toml`).
 //!
 //! Usage:
 //! ```text
@@ -17,7 +17,8 @@
 //! authentication (encrypted but unverified) and logs a warning — handy for a
 //! quick smoke test, but it is not the "server authentication" path.
 
-use std::{env, thread, time};
+use std::env;
+use std::time::Duration;
 
 use modem_manager_rs::cellular::{
     ssl_recv_digest_hook, QuectelBG9X, INGRESS_BUF_SIZE, URC_CAPACITY, URC_SUBSCRIBERS,
@@ -27,7 +28,7 @@ use modem_manager_rs::quectel_atat::types::{
 };
 use modem_manager_rs::quectel_atat::urc::Urc;
 
-use atat::blocking::Client;
+use atat::asynch::Client;
 use atat::AtatIngress;
 use atat::DefaultDigester;
 use atat::Ingress;
@@ -36,8 +37,9 @@ use atat::{Config as AtatConfig, ResponseSlot, UrcChannel};
 use embedded_hal_mock::eh1::digital::{
     Mock as PinMock, State as PinState, Transaction as PinTransaction,
 };
-use embedded_io::Read;
+use embedded_io_adapters::tokio_1::FromTokio;
 use static_cell::StaticCell;
+use tokio_serial::SerialPortBuilderExt;
 
 #[toml_cfg::toml_config]
 struct Config {
@@ -76,8 +78,11 @@ struct Config {
     serial_port: &'static str,
 }
 
-fn main() {
-    let serial_port = env::args().nth(1).expect("Usage: cargo run --bin http_get_tls <device>");
+#[tokio::main]
+async fn main() {
+    let serial_port = env::args()
+        .nth(1)
+        .expect("Usage: cargo run --bin http_get_tls <device>");
     env_logger::builder()
         .filter_level(log::LevelFilter::Debug)
         .init();
@@ -89,15 +94,13 @@ fn main() {
     ];
     let modem_pwr_key = PinMock::new(&expectations);
 
-    // Open the serial port and split it into tx/rx halves.
-    let serial_tx = serialport::new(serial_port, 115_200)
-        .timeout(std::time::Duration::from_millis(1000))
-        .open()
+    // Open the serial port asynchronously and split it into tx/rx halves.
+    let serial = tokio_serial::new(serial_port, 115_200)
+        .open_native_async()
         .expect("Could not open serial port");
-    let serial_rx = serial_tx.try_clone().expect("Could not clone serial port");
-
-    let serial_tx = embedded_io_adapters::std::FromStd::new(serial_tx);
-    let mut serial_rx = embedded_io_adapters::std::FromStd::new(serial_rx);
+    let (serial_rx, serial_tx) = tokio::io::split(serial);
+    let serial_tx = FromTokio::new(serial_tx);
+    let mut serial_rx = FromTokio::new(serial_rx);
 
     static INGRESS_BUF: StaticCell<[u8; INGRESS_BUF_SIZE]> = StaticCell::new();
     static RES_SLOT: ResponseSlot<INGRESS_BUF_SIZE> = ResponseSlot::new();
@@ -105,8 +108,7 @@ fn main() {
     // Use a custom-success digester hook so the binary `+QSSLRECV` data frame
     // is framed by its length prefix instead of atat's line/prompt heuristics,
     // which otherwise mis-parse binary payloads containing `>` / `\r\nOK\r\n`.
-    let digester =
-        DefaultDigester::<Urc>::default().with_custom_success(ssl_recv_digest_hook);
+    let digester = DefaultDigester::<Urc>::default().with_custom_success(ssl_recv_digest_hook);
     let mut ingress = Ingress::new(
         digester,
         INGRESS_BUF.init([0; INGRESS_BUF_SIZE]),
@@ -119,34 +121,19 @@ fn main() {
 
     let client = Client::new(serial_tx, &RES_SLOT, buf, AtatConfig::default());
 
-    log::info!("Starting ATAT loop...");
-    let _ = std::thread::spawn(move || loop {
-        let buf = ingress.write_buf();
-        match serial_rx.read(buf) {
-            Ok(len) => match ingress.try_advance(len) {
-                Ok(_) => {}
-                Err(e) => {
-                    log::info!("Error advancing ingress {:?}", e);
-                    ingress.clear();
-                }
-            },
-            Err(e) => {
-                if e.kind() != std::io::ErrorKind::TimedOut {
-                    log::info!("Error reading from UART: {:?}", e);
-                }
-                ingress.clear();
-            }
-        }
+    log::info!("Starting ATAT ingress task...");
+    tokio::spawn(async move {
+        ingress.read_from(&mut serial_rx).await;
     });
     // end of atat initialization
 
     log::info!("Starting ATAT client...");
-    let mut mm = match QuectelBG9X::new(modem_pwr_key.clone(), client, &URC_CHANNEL) {
+    let mut mm = match QuectelBG9X::new(modem_pwr_key.clone(), client, &URC_CHANNEL).await {
         Ok(mm) => mm,
         Err(e) => {
             log::error!("Error initializing modem: {:?}", e);
             loop {
-                thread::sleep(time::Duration::from_millis(1000));
+                tokio::time::sleep(Duration::from_millis(1000)).await;
             }
         }
     };
@@ -157,18 +144,18 @@ fn main() {
     // GSM/eMTC/NB-IoT bands and RAT search order here.)
     let mm_config = ModemConfiguration::new();
 
-    mm.is_alive().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    mm.set_modem_funcionality(true).unwrap();
-    mm.test_sim().unwrap_or_else(|_| {
+    mm.is_alive().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    mm.set_modem_funcionality(true).await.unwrap();
+    if mm.test_sim().await.is_err() {
         log::error!("SIM test failed, stopping execution.");
-        let _ = mm.power_off();
+        let _ = mm.power_off().await;
         loop {
-            thread::sleep(time::Duration::from_secs(1));
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
-    });
+    }
 
-    mm.set_modem_configuration(mm_config).unwrap();
+    mm.set_modem_configuration(mm_config).await.unwrap();
     mm.set_context_configuration(
         CONFIG.modem_apn,
         CONFIG.modem_user,
@@ -176,22 +163,20 @@ fn main() {
         AuthenticationMethod::try_from(CONFIG.modem_auth_method)
             .unwrap_or(AuthenticationMethod::None),
     )
+    .await
     .unwrap();
-    // mm.set_modem_funcionality(true).unwrap();
+    // mm.set_modem_funcionality(true).await.unwrap();
 
-    mm.network_attach().unwrap();
-    let (_, signalq) = mm.get_signal_strength().unwrap();
+    mm.network_attach().await.unwrap();
+    let (_, signalq) = mm.get_signal_strength().await.unwrap();
     log::info!("Signal quality: {}%", signalq);
 
-    mm.context_activate().unwrap();
+    mm.context_activate().await.unwrap();
 
-        loop {
-                // Sync the clock so the modem can check the server certificate validity dates.
-    match mm.get_ntp_time("0.pool.ntp.org") {
-        Ok(ts) => log::info!("NTP time: {}", ts),
+    // Sync the clock so the modem can check the server certificate validity dates.
+    match mm.get_ntp_time("0.pool.ntp.org").await {
+        Ok(ts) => log::info!("NTP time: {:?}", ts),
         Err(e) => log::warn!("NTP sync failed ({:?}); relying on ignore_localtime", e),
-    }
-        thread::sleep(time::Duration::from_secs(1));
     }
 
     // ---- TLS server-authentication configuration ----------------------------
@@ -219,8 +204,9 @@ fn main() {
             ca_pem.len()
         );
         // Overwrite any stale copy first (ignore "not found").
-        let _ = mm.delete_file_from_internal_flash("cacert.pem");
+        let _ = mm.delete_file_from_internal_flash("cacert.pem").await;
         mm.upload_file_to_internal_flash("cacert.pem", &ca_pem)
+            .await
             .expect("Failed to upload CA certificate");
 
         ssl.set_ca_cert("cacert.pem").unwrap();
@@ -228,17 +214,23 @@ fn main() {
     }
 
     mm.configure_ssl_context(ssl)
+        .await
         .expect("Failed to configure SSL context");
 
     // ---- Open the socket, send the request, read the response ----------------
     const SOCKET_ID: u8 = 0;
-    log::info!("Connecting to https://{}:{}", CONFIG.http_host, CONFIG.http_port);
+    log::info!(
+        "Connecting to https://{}:{}",
+        CONFIG.http_host,
+        CONFIG.http_port
+    );
     mm.ssl_socket_open(
         SOCKET_ID,
         CONFIG.ssl_context_id,
         CONFIG.http_host,
         CONFIG.http_port,
     )
+    .await
     .expect("Failed to open TLS socket");
 
     // Minimal HTTP/1.1 request. `Connection: close` makes the server close the
@@ -252,6 +244,7 @@ fn main() {
 
     log::info!("Sending HTTP request:\n{}", request);
     mm.ssl_socket_send(SOCKET_ID, request.as_bytes())
+        .await
         .expect("Failed to send HTTP request");
 
     // Drain the response. `ssl_socket_recv` returns 0 when nothing is buffered
@@ -261,9 +254,9 @@ fn main() {
     let mut buf = [0u8; 512];
     let mut total = 0usize;
     let mut idle_reads = 0u32;
-    let start = std::time::Instant::now();
-    while start.elapsed() < std::time::Duration::from_secs(20) {
-        match mm.ssl_socket_recv(SOCKET_ID, &mut buf) {
+    let start = tokio::time::Instant::now();
+    while start.elapsed() < Duration::from_secs(20) {
+        match mm.ssl_socket_recv(SOCKET_ID, &mut buf).await {
             Ok(0) => {
                 // Once we've received something, ~2s of silence means we're done.
                 if total > 0 {
@@ -272,7 +265,7 @@ fn main() {
                         break;
                     }
                 }
-                thread::sleep(std::time::Duration::from_millis(100));
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
             Ok(n) => {
                 idle_reads = 0;
@@ -288,13 +281,13 @@ fn main() {
     println!();
     log::info!("Received {} bytes total", total);
 
-    mm.ssl_socket_close(SOCKET_ID).unwrap_or_else(|e| {
+    mm.ssl_socket_close(SOCKET_ID).await.unwrap_or_else(|e| {
         log::error!("Failed to close socket: {:?}", e);
     });
-    mm.context_deactivate().unwrap();
-    mm.power_off().unwrap();
+    mm.context_deactivate().await.unwrap();
+    mm.power_off().await.unwrap();
 
     loop {
-        thread::sleep(time::Duration::from_secs(1));
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }

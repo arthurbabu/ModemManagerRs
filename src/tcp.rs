@@ -1,9 +1,10 @@
 //! Async TCP / TLS sockets backed by the modem, exposed through the
 //! [`embedded-nal-async`](https://docs.rs/embedded-nal-async) traits.
 //!
-//! This module is only available with the `embassy` feature (the
-//! `embedded-nal-async` traits are async-only). It supports **both** transports
-//! the modem offers, selected per client via [`Transport`](crate::Transport):
+//! This is the shared socket module for both runtime features -- `std` (drive
+//! it from tokio, or any other executor) and `embassy`. It supports **both**
+//! transports the modem offers, selected per client via
+//! [`Transport`](crate::Transport):
 //!
 //! - [`Transport::Tcp`](crate::Transport::Tcp) — plain TCP
 //!   (`AT+QIOPEN`/`QISEND`/`QIRD`/`QICLOSE`).
@@ -18,7 +19,10 @@
 //! [`embedded_nal_async::TcpConnect::connect`] takes `&self`, yet issuing AT
 //! commands needs `&mut` access to the driver. The modem is therefore shared
 //! behind an [`embassy_sync::mutex::Mutex`]; each socket operation locks it for
-//! the duration of a single command.
+//! the duration of a single command. [`Mutex`] is generic over the raw mutex
+//! (`M: RawMutex`): use `NoopRawMutex` on a single-threaded embassy executor,
+//! and `CriticalSectionRawMutex` when multiple OS threads may touch it (e.g.
+//! tokio's multi-threaded runtime under `std`).
 //!
 //! # SNI / hostname note
 //!
@@ -229,8 +233,9 @@ impl<M: RawMutex, W: Write, P: OutputPin> Write for ModemSocket<'_, M, W, P> {
         Ok(buf.len())
     }
 
-    async fn flush(&mut self) -> Result<(), <Self as embedded_io::ErrorType>::Error> {
-        todo!()
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        // Each `write` pushes straight to the modem, so there is nothing buffered.
+        Ok(())
     }
 }
 

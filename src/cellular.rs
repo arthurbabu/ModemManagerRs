@@ -9,12 +9,13 @@
 
 //! Cellular driver for the Quectel BG9X family.
 //!
-//! The driver logic is written once in `async` form. The [`maybe_async_cfg`]
-//! macro generates a **blocking** implementation when the `std` feature is
-//! enabled and an **async** implementation when the `embassy` feature is
-//! enabled. All timing (delays and timeouts) goes through the private
-//! [`compat`] module, which is backed by `std::thread`/`std::time` for `std`
-//! and by `embassy-time` for `embassy`.
+//! The driver logic is written once in `async` form and runs unchanged on
+//! both runtime backends: `std` (hosted OS, driven by any executor -- tokio in
+//! the examples) and `embassy` (bare-metal `no_std`, driven by the embassy
+//! executor). All timing (delays and timeouts) goes through the private
+//! [`compat`] module, which is backed by `embassy-time` in both cases
+//! (`embassy-time`'s `std` backend under `std`, its embedded time driver
+//! under `embassy`).
 
 #[cfg(feature = "defmt")]
 use defmt::*;
@@ -30,19 +31,7 @@ use crate::quectel_atat::types::*;
 use crate::quectel_atat::urc::Urc;
 use crate::quectel_atat::*;
 
-// The AT client and the `Write` bound differ between runtimes: the blocking
-// runtime uses `embedded_io::Write`, the async runtime uses
-// `embedded_io_async::Write`. Selecting them here keeps the rest of the module
-// runtime-agnostic (the identifiers `Client`, `AtatClient` and `Write` resolve
-// to the right types for the active feature).
-#[cfg(feature = "std")]
-use atat::blocking::{AtatClient, Client};
-#[cfg(feature = "std")]
-use embedded_io::Write;
-
-#[cfg(feature = "embassy")]
 use atat::asynch::{AtatClient, Client};
-#[cfg(feature = "embassy")]
 use embedded_io_async::Write;
 
 use atat::heapless::String as HeaplessString;
@@ -51,31 +40,11 @@ use atat::{UrcChannel, UrcSubscription};
 
 use crate::ModemError;
 
-/// Runtime timing primitives, selected by the active feature.
-///
-/// `delay_ms` / `delay_secs` are `async` under `embassy` and blocking under
-/// `std`; the `maybe_async_cfg`-generated code awaits them in the async variant
-/// and calls them directly in the blocking variant. `Instant` / `elapsed_ms`
-/// provide a monotonic clock for timeout loops that behaves identically in both
-/// worlds (elapsed time expressed as whole milliseconds).
-#[cfg(feature = "std")]
-mod compat {
-    pub use std::time::Instant;
-
-    pub fn delay_ms(ms: u64) {
-        std::thread::sleep(std::time::Duration::from_millis(ms));
-    }
-
-    pub fn delay_secs(secs: u64) {
-        std::thread::sleep(std::time::Duration::from_secs(secs));
-    }
-
-    pub fn elapsed_ms(since: Instant) -> u64 {
-        since.elapsed().as_millis() as u64
-    }
-}
-
-#[cfg(feature = "embassy")]
+/// Runtime timing primitives, backed by `embassy-time` for both runtime
+/// features (its `std` backend under `std`, its embedded time driver under
+/// `embassy`). `Instant` / `elapsed_ms` provide a monotonic clock for timeout
+/// loops that behaves identically in both worlds (elapsed time expressed as
+/// whole milliseconds).
 mod compat {
     pub use embassy_time::Instant;
     pub use embassy_time::{with_timeout, Duration, Timer};
@@ -259,7 +228,6 @@ pub struct QuectelBG9X<W: Write, OutputPinGeneric: OutputPin> {
     socket_sub: Option<UrcSubscription<'static, Urc, URC_CAPACITY, URC_SUBSCRIBERS>>,
 }
 
-#[maybe_async_cfg::maybe(keep_self, sync(feature = "std"), async(feature = "embassy"))]
 impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
     pub async fn new(
         power_gpio: OutputPinGeneric,
@@ -810,85 +778,48 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
 
         let mut subscriber = self.urc_channel.subscribe().unwrap();
 
-        #[cfg(feature = "std")]
-        {
-            let now = compat::Instant::now();
-            while compat::elapsed_ms(now) < 10_000 {
-                compat::delay_ms(500).await;
+        // Wrap the await in a 10-second timeout.
+        let timeout_duration = compat::Duration::from_secs(10);
 
-                match subscriber.try_next_message_pure() {
-                    Some(Urc::NtpTime(res)) => {
-                        match res.err {
-                            0 => {}
-                            _ => {
-                                error!("NTP failed");
-                                return Err(ModemError::NtpRequestFailed);
-                            }
+        let wait_result = compat::with_timeout(timeout_duration, async {
+            loop {
+                // Task sleeps here with zero CPU usage until a message arrives.
+                let msg = subscriber.next_message_pure().await;
+
+                // CAPTURE TIME IMMEDIATELY for highest precision
+                let exact_cpt = compat::Instant::now().as_ticks();
+
+                match msg {
+                    Urc::NtpTime(res) => {
+                        if res.err != 0 {
+                            error!("NTP failed");
+                            return Err(ModemError::NtpRequestFailed);
                         }
 
-                        let exact_cpt = compat::Instant::now().as_ticks();
                         info!("Network time: {:?}", res.time);
-                        return (get_timestamp_from_ntp_response(&res.time), exact_cpt);
+                        let ts = get_timestamp_from_ntp_response(&res.time)?;
+                        return Ok((ts, exact_cpt));
                     }
-                    Some(e) => {
+                    e => {
+                        // Ignore unknown URCs and let the loop await the next message
                         error!("Unknown URC {:?}", e);
                     }
-                    None => {
-                        debug!("Waiting for response...");
-                    }
                 }
+            }
+        })
+        .await;
+
+        // Handle the result of the timeout wrapper
+        match wait_result {
+            Ok(Ok(val)) => return Ok(val), // Success: received NTP and parsed correctly
+            Ok(Err(e)) => return Err(e),   // Error: NTP explicitly failed (e.g. NtpRequestFailed)
+            Err(_) => {
+                // Error: the 10-second timeout elapsed
+                error!("NTP wait timed out");
             }
         }
 
-        #[cfg(feature = "embassy")]
-        {
-            // Wrap the await in a 10-second timeout
-            let timeout_duration = compat::Duration::from_secs(10);
-
-            let wait_result = compat::with_timeout(timeout_duration, async {
-                loop {
-                    // Task sleeps here with zero CPU usage until a message arrives
-                    let msg = subscriber.next_message_pure().await;
-
-                    // CAPTURE TIME IMMEDIATELY for highest precision
-                    let exact_cpt = compat::Instant::now().as_ticks();
-
-                    match msg {
-                        Urc::NtpTime(res) => {
-                            if res.err != 0 {
-                                error!("NTP failed");
-                                return Err(ModemError::NtpRequestFailed);
-                            }
-
-                            info!("Network time: {:?}", res.time);
-                            let ts = get_timestamp_from_ntp_response(&res.time)?;
-                            return Ok((ts, exact_cpt));
-                        }
-                        e => {
-                            // Ignore unknown URCs and let the loop await the next message
-                            error!("Unknown URC {:?}", e);
-                        }
-                    }
-                }
-            })
-            .await;
-
-            // Handle the result of the timeout wrapper
-            match wait_result {
-                Ok(Ok(val)) => {
-                    return Ok(val);
-                } // Success: Received NTP and parsed correctly
-                Ok(Err(e)) => {
-                    return Err(e);
-                } // Error: NTP explicitly failed (e.g., NtpRequestFailed)
-                Err(_) => {
-                    // Error: The 10-second timeout elapsed
-                    error!("NTP wait timed out");
-                }
-            }
-
-            Err(ModemError::NotResponding)
-        }
+        Err(ModemError::NotResponding)
     }
 
     pub async fn get_signal_strength(&mut self) -> Result<(i16, u8), ModemError> {
@@ -2951,5 +2882,17 @@ mod tests {
         // and often the exact index where it failed!
         println!("Detailed Parser Result: {:#?}", result);
         result.unwrap();
+    }
+
+    /// Regression check for the `compat` module unification: under `std`,
+    /// `delay_ms`/`Instant`/`elapsed_ms` are backed by `embassy-time`'s `std`
+    /// timer queue (driven on its own thread) rather than `std::thread::sleep`,
+    /// but must still behave like a normal delay under any executor (tokio
+    /// here).
+    #[tokio::test]
+    async fn compat_delay_ms_elapses_at_least_the_requested_time() {
+        let start = compat::Instant::now();
+        compat::delay_ms(50).await;
+        assert!(compat::elapsed_ms(start) >= 50);
     }
 }
