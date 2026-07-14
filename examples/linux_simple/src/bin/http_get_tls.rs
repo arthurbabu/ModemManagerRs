@@ -194,15 +194,6 @@ fn main() {
         thread::sleep(time::Duration::from_secs(1));
     }
 
-    /*
-    let now = mm.get_ntp_datetime("0.pool.ntp.org").await;
-    log::info!("UTC now: {}", now);
-
-        loop {
-        thread::sleep(time::Duration::from_secs(1));
-    }
-    */
-
     // ---- TLS server-authentication configuration ----------------------------
     let mut ssl = SslConfiguration::new();
     ssl.set_context_id(CONFIG.ssl_context_id).unwrap();

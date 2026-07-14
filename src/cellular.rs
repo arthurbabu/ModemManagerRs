@@ -78,7 +78,7 @@ mod compat {
 #[cfg(feature = "embassy")]
 mod compat {
     pub use embassy_time::Instant;
-    use embassy_time::{Duration, Timer};
+    pub use embassy_time::{with_timeout, Duration, Timer};
 
     pub async fn delay_ms(ms: u64) {
         Timer::after(Duration::from_millis(ms)).await;
@@ -790,7 +790,7 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         }
     }
 
-    pub async fn get_ntp_time(&mut self, ntp_server: &str) -> Result<i64, ModemError> {
+    pub async fn get_ntp_time(&mut self, ntp_server: &str) -> Result<(i64, u64), ModemError> {
         match self
             .client
             .send(&GetNetworkNtpTime {
@@ -809,51 +809,86 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         }
 
         let mut subscriber = self.urc_channel.subscribe().unwrap();
-        let now = compat::Instant::now();
-        while compat::elapsed_ms(now) < 10_000 {
-            compat::delay_ms(500).await;
 
-            match subscriber.try_next_message_pure() {
-                Some(Urc::NtpTime(res)) => {
-                    match res.err {
-                        0 => {}
-                        _ => {
-                            error!("NTP failed");
-                            return Err(ModemError::NtpRequestFailed);
+        #[cfg(feature = "std")]
+        {
+            let now = compat::Instant::now();
+            while compat::elapsed_ms(now) < 10_000 {
+                compat::delay_ms(500).await;
+
+                match subscriber.try_next_message_pure() {
+                    Some(Urc::NtpTime(res)) => {
+                        match res.err {
+                            0 => {}
+                            _ => {
+                                error!("NTP failed");
+                                return Err(ModemError::NtpRequestFailed);
+                            }
                         }
-                    }
 
-                    info!("Network time: {:?}", res.time);
-                    return get_timestamp_from_ntp_response(&res.time);
-                }
-                Some(e) => {
-                    error!("Unknown URC {:?}", e);
-                }
-                None => {
-                    debug!("Waiting for response...");
+                        let exact_cpt = compat::Instant::now().as_ticks();
+                        info!("Network time: {:?}", res.time);
+                        return (get_timestamp_from_ntp_response(&res.time), exact_cpt);
+                    }
+                    Some(e) => {
+                        error!("Unknown URC {:?}", e);
+                    }
+                    None => {
+                        debug!("Waiting for response...");
+                    }
                 }
             }
         }
 
-        Err(ModemError::NotResponding)
-    }
+        #[cfg(feature = "embassy")]
+        {
+            // Wrap the await in a 10-second timeout
+            let timeout_duration = compat::Duration::from_secs(10);
 
-    /// Synchronise the clock over NTP and return it as a [`chrono::DateTime<Utc>`].
-    ///
-    /// Convenience wrapper over [`get_ntp_time`](Self::get_ntp_time): it issues
-    /// the same `AT+QNTP` request (a PDP context must be active) and converts the
-    /// resulting Unix timestamp into a `chrono` UTC datetime.
-    ///
-    /// ```ignore
-    /// let now = mm.get_ntp_datetime("0.pool.ntp.org").await?;
-    /// info!("UTC now: {}", now); // e.g. 2026-07-12 13:43:47 UTC
-    /// ```
-    pub async fn get_ntp_datetime(
-        &mut self,
-        ntp_server: &str,
-    ) -> Result<chrono::DateTime<chrono::Utc>, ModemError> {
-        let ts = self.get_ntp_time(ntp_server).await?;
-        chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0).ok_or(ModemError::NtpRequestFailed)
+            let wait_result = compat::with_timeout(timeout_duration, async {
+                loop {
+                    // Task sleeps here with zero CPU usage until a message arrives
+                    let msg = subscriber.next_message_pure().await;
+
+                    // CAPTURE TIME IMMEDIATELY for highest precision
+                    let exact_cpt = compat::Instant::now().as_ticks();
+
+                    match msg {
+                        Urc::NtpTime(res) => {
+                            if res.err != 0 {
+                                error!("NTP failed");
+                                return Err(ModemError::NtpRequestFailed);
+                            }
+
+                            info!("Network time: {:?}", res.time);
+                            let ts = get_timestamp_from_ntp_response(&res.time)?;
+                            return Ok((ts, exact_cpt));
+                        }
+                        e => {
+                            // Ignore unknown URCs and let the loop await the next message
+                            error!("Unknown URC {:?}", e);
+                        }
+                    }
+                }
+            })
+            .await;
+
+            // Handle the result of the timeout wrapper
+            match wait_result {
+                Ok(Ok(val)) => {
+                    return Ok(val);
+                } // Success: Received NTP and parsed correctly
+                Ok(Err(e)) => {
+                    return Err(e);
+                } // Error: NTP explicitly failed (e.g., NtpRequestFailed)
+                Err(_) => {
+                    // Error: The 10-second timeout elapsed
+                    error!("NTP wait timed out");
+                }
+            }
+
+            Err(ModemError::NotResponding)
+        }
     }
 
     pub async fn get_signal_strength(&mut self) -> Result<(i16, u8), ModemError> {
