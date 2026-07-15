@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 log = { version = "0.4.20" }
 env_logger = "0.11.3"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "io-util", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "io-util", "net", "sync"] }
 tokio-serial = "5.4.5"
 
 atat = { git="https://github.com/arthurbabu/atat.git", features = [
@@ -19,16 +19,18 @@ atat = { git="https://github.com/arthurbabu/atat.git", features = [
 # This example targets the EG916U (LTE Cat 1bis). `default-features = false` is
 # required so the crate's default `bg95` chip is not also enabled (chips are
 # mutually exclusive); re-add the (now async, tokio-driven) `std` runtime
-# explicitly.
+# explicitly. `ppp` additionally pulls in the `embassy-net`-over-PPP path used
+# by the `ppp_https` example.
 modem-manager-rs = { path = "../../", default-features = false, features = [
     "eg916u",
     "std",
     "log",
+    "ppp",
 ] }
 static_cell = "2.1.0"
 # Required by `embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex`,
-# used by the `tcp_socket` example to share the modem safely across tokio's
-# multi-threaded runtime.
+# used by the `tcp_socket` and `ppp_https` examples to share the modem safely
+# across tokio's multi-threaded runtime.
 critical-section = { version = "1.1.2", features = ["std"] }
 embedded-hal = "1.0.0"
 # The `tcp_socket` example shares the modem behind this async Mutex and drives
@@ -40,3 +42,34 @@ embedded-io-adapters = { version = "0.7.0", features = ["tokio-1"] }
 embassy-time = { version = "0.5.1", features = ["std", "generic-queue-8"] }
 toml-cfg = "0.2.0"
 embedded-hal-mock = "0.11.1"
+
+# ---- `ppp_https` example only ----------------------------------------------
+embassy-net = { version = "0.9.1", default-features = false, features = [
+    "proto-ipv4",
+    "medium-ip",
+    "tcp",
+    "udp",
+    "dns",
+] }
+embassy-net-ppp = "0.3.0"
+# `rand` 0.8 (not the newer 0.10) because `embedded-tls` pins `rand_core`
+# 0.6.3, and rand 0.8's `OsRng` implements that version's `RngCore`/`CryptoRng`.
+rand = "0.8"
+embedded-tls = { version = "0.19.0", default-features = false, features = [
+    "std",
+    "webpki",
+    "log",
+] }
+# Decodes the user-supplied CA certificate PEM into the DER bytes
+# `embedded_tls::webpki::CertVerifier` needs.
+pem = "3.0"
+# SNTP client (UDP, port 123) demonstrated once the PPP link is up --
+# `sntpc` is the protocol implementation; the `-net-embassy`/`-time-embassy`
+# companion crates adapt it to `embassy_net::udp::UdpSocket` and
+# `embassy_time::Instant` respectively (both already used throughout this
+# example/crate).
+sntpc = "0.11"
+sntpc-net-embassy = "0.11"
+sntpc-time-embassy = "0.6"
+# Pretty-prints the resolved NTP time for the log line.
+chrono = { version = "0.4", default-features = false, features = ["std"] }

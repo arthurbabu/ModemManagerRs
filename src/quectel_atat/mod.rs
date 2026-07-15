@@ -1345,3 +1345,64 @@ pub struct CloseFile {
     #[at_arg(position = 1)]
     pub filehandle: u32,
 }
+
+/// `ATD*99#` — dial the modem into PPP data mode on the PDP context most
+/// recently configured via `AT+CGDCONT`
+/// ([`crate::cellular::QuectelBG9X::set_context_configuration`]). Every byte
+/// received after this command succeeds is raw PPP framing, not AT traffic.
+///
+/// Deliberately the bare `*99#` form, **not** the `*99***<cid>#` variant some
+/// other chip families accept: confirmed against Quectel's own
+/// "EC2x&EG9x&EM05 PPP Application Note" (Figure 2), which dials with plain
+/// `ATD*99#` after `AT+CGDCONT` -- the `<cid>` suffix is unnecessary (and, in
+/// testing against real EG916U hardware, caused the command to never
+/// terminate/respond at all) since the context is already selected by the
+/// preceding `AT+CGDCONT`. `*99#` is also the more universally-supported
+/// form across GSM/LTE modules generally, and this driver only ever
+/// configures a single PDP context, so there's no multi-context case where
+/// the `<cid>` suffix would add anything.
+///
+/// This doesn't fit the derive macro's comma-separated-argument model (no
+/// `=`, a literal trailing `#`), so `write`/`parse` are hand-rolled, same
+/// precedent as [`SslRecv`] / [`SendRawContents`].
+///
+/// **The modem's `CONNECT` reply can never be observed as this command's
+/// response.** [`crate::quectel_atat::urc::Urc`] has a pre-existing
+/// `#[at_urc("CONNECT")] FileDataModeStarted` variant (originally for an
+/// unrelated file-manager data-mode transition, but textually identical),
+/// and atat's `digest()` always tries URC matching *before* success/
+/// custom-success matching -- so a `CONNECT` reply is unconditionally
+/// captured as that URC, never as a digested `Response`, no matter what
+/// digester hooks are installed. `EXPECTS_RESPONSE_CODE = false` reflects
+/// this: don't wait on the normal response path at all (it would just hang
+/// until `Client::send()`'s timeout on every successful dial). Callers must
+/// subscribe to the URC channel *before* sending this command and wait for
+/// `Urc::FileDataModeStarted` instead --
+/// [`crate::cellular::QuectelBG9X::dial_ppp`] does this.
+#[cfg(feature = "ppp")]
+#[derive(Clone)]
+pub struct DialPpp;
+
+#[cfg(feature = "ppp")]
+impl atat::AtatCmd for DialPpp {
+    type Response = NoResponse;
+    const EXPECTS_RESPONSE_CODE: bool = false;
+
+    fn write(&self, buf: &mut [u8]) -> usize {
+        use embedded_io::Write;
+
+        let original_len = buf.len();
+        let mut writer = buf;
+        writer.write(b"ATD*99#\r").unwrap();
+
+        original_len - writer.len()
+    }
+
+    fn parse(
+        &self,
+        resp: Result<&[u8], atat::InternalError>,
+    ) -> Result<Self::Response, atat::Error> {
+        resp.map_err(atat::Error::from)?;
+        Ok(NoResponse)
+    }
+}

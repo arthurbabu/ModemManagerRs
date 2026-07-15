@@ -1172,6 +1172,74 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         }
     }
 
+    /// Dial the modem into PPP data mode on the PDP context most recently
+    /// configured via `set_context_configuration` (`ATD*99#`), for use with
+    /// [`crate::ppp`]'s `embassy-net` integration.
+    ///
+    /// The context must already be configured and the modem network-attached
+    /// (`set_context_configuration` + `network_attach`), same as before
+    /// opening an AT-command-driven socket via [`crate::tcp`]. Unlike that
+    /// path, once this returns `Ok(())` **every subsequent byte on the UART
+    /// is raw PPP framing, not AT traffic** -- do not send further AT
+    /// commands through this driver afterwards. Reclaim the raw serial halves
+    /// (see [`Self::client_mut`] and [`crate::ppp::Reclaimable`]) and hand
+    /// them to `embassy-net-ppp` instead.
+    ///
+    /// This is a one-way trip for this driver instance: there is no API here
+    /// to escape back to AT command mode (real hardware supports it via a
+    /// `+++` guard sequence, but wiring that back up is out of scope).
+    ///
+    /// The modem's `CONNECT` reply is textually identical to an unrelated,
+    /// pre-existing URC (`Urc::FileDataModeStarted` -- see
+    /// [`crate::quectel_atat::DialPpp`]'s docs for why), and atat always
+    /// resolves URC matches before command responses, so it can never be
+    /// observed as this command's ordinary response. This subscribes to the
+    /// URC channel *before* sending (subscribers only see URCs published
+    /// after they subscribe) and waits for that URC instead.
+    #[cfg(feature = "ppp")]
+    pub async fn dial_ppp(&mut self) -> Result<(), ModemError> {
+        info!("Dialing PPP...");
+
+        let mut subscriber = self.urc_channel.subscribe().unwrap();
+
+        if let Err(e) = self.client.send(&DialPpp).await {
+            error!("PPP dial failed to send: {:?}", e);
+            return Err(ModemError::NotResponding);
+        }
+
+        let timeout_duration = compat::Duration::from_secs(30);
+        let wait_result = compat::with_timeout(timeout_duration, async {
+            loop {
+                if let Urc::FileDataModeStarted = subscriber.next_message_pure().await {
+                    return;
+                }
+            }
+        })
+        .await;
+
+        match wait_result {
+            Ok(()) => {
+                info!("PPP link established");
+                Ok(())
+            }
+            Err(_) => {
+                error!("PPP dial timed out waiting for CONNECT");
+                Err(ModemError::NotResponding)
+            }
+        }
+    }
+
+    /// Mutable access to the underlying AT client.
+    ///
+    /// Escape hatch for [`Self::dial_ppp`] callers: after a successful dial,
+    /// use `self.client_mut().inner()` to reach the writer wrapped in
+    /// [`crate::ppp::Reclaimable`] and `.take()` it back out, now that no
+    /// further AT commands will be sent on this connection.
+    #[cfg(feature = "ppp")]
+    pub fn client_mut(&mut self) -> &mut Client<'static, W, INGRESS_BUF_SIZE> {
+        &mut self.client
+    }
+
     /// Connect to an MQTT broker.
     ///
     /// # Arguments

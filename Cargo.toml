@@ -51,6 +51,27 @@ embassy-sync = "0.8.0"
 defmt = { version = "1.1.1", optional = true}
 heapless = { version = "0.9.3", default-features = false}
 
+# `ppp` feature: a second, lower-level path that dials the modem into PPP
+# data mode (`ATD*99***<cid>#`) and hands the raw UART to `embassy-net-ppp`,
+# giving a full `embassy_net::Stack` (real DNS, UDP, concurrent TCP) instead
+# of the modem's own AT-command-driven socket engine (`tcp`, above). Written
+# once, generic over both runtimes, same as the rest of the driver.
+embassy-net = { version = "0.9.1", optional = true, default-features = false, features = [
+    "proto-ipv4",
+    "medium-ip",
+    "tcp",
+    "udp",
+    "dns",
+] }
+embassy-net-ppp = { version = "0.3.0", optional = true }
+# `webpki`-based CA-chain verification is std-only upstream (see the `std`
+# feature below); the `embassy`/no_std path still gets the TLS transport, just
+# without automatic certificate verification out of the box.
+embedded-tls = { version = "0.19.0", optional = true, default-features = false }
+# Only the `RngCore`/`CryptoRng` traits are used (the caller supplies the
+# actual RNG -- `OsRng` under `std`, a HW RNG peripheral under `embassy`).
+rand_core = { version = "0.6", optional = true }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "time"] }
 
@@ -74,5 +95,17 @@ log = ["dep:log", "atat/log"]
 #              std backend.
 # `embassy` -> bare-metal `no_std`, embassy executor, embassy-time's embedded
 #              backend (registered by the downstream HAL).
-std = ["embassy-time/std", "embassy-time/generic-queue-8"]
+std = [
+    "embassy-time/std",
+    "embassy-time/generic-queue-8",
+    # `embedded-tls`'s CA-chain (`webpki`) verifier is std-only upstream; wire
+    # it in automatically whenever both `std` and `ppp` are enabled.
+    "embedded-tls?/std",
+    "embedded-tls?/webpki",
+]
 embassy = []
+
+# Second, lower-level networking path: dial the modem into PPP data mode and
+# run a full `embassy_net::Stack` over it instead of the modem's own
+# AT-command socket engine (`tcp`, above). Additive to either runtime feature.
+ppp = ["dep:embassy-net", "dep:embassy-net-ppp", "dep:embedded-tls", "dep:rand_core"]

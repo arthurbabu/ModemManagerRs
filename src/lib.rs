@@ -53,6 +53,13 @@ pub enum Transport {
 /// `embassy`.
 pub mod tcp;
 
+/// Second, lower-level networking path: dial the modem into PPP data mode
+/// and run a full `embassy_net` stack over it, instead of the modem's own
+/// AT-command-driven socket engine ([`tcp`]). Only available with the `ppp`
+/// feature (additive to either runtime feature).
+#[cfg(feature = "ppp")]
+pub mod ppp;
+
 #[derive(Debug, Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ModemError {

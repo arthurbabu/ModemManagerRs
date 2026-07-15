@@ -25,7 +25,7 @@ ssl_context_id = 2
 # Leave empty to connect WITHOUT server verification (encrypted only).
 # For www.google.com use the Google Trust Services root (e.g. GTS Root R1),
 # available from https://pki.goog/repository/ .
-ca_cert_path = "r1.pem"
+ca_cert_path = "we2x.pem"
 
 # Verify the certificate hostname matches http_host.
 ssl_checkhost = false
