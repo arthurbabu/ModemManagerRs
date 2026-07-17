@@ -89,7 +89,18 @@ default = ["bg95", "std", "log"]
 bg95 = []
 bg96 = []
 eg916u = []
-defmt = ["dep:defmt", "atat/defmt", "heapless/defmt"]
+# `?` (weak dependency feature) forwards `defmt` into `embassy-net`/
+# `embassy-net-ppp` only if the optional `ppp` feature already pulled them in
+# -- otherwise this would force-enable those deps for everyone. Needed
+# because `net.rs` formats their error types with `{:?}` in its `defmt`-or-
+# `log` status/reconnect logging.
+defmt = [
+    "dep:defmt",
+    "atat/defmt",
+    "heapless/defmt",
+    "embassy-net?/defmt",
+    "embassy-net-ppp?/defmt",
+]
 log = ["dep:log", "atat/log"]
 
 # Runtime selection (mutually exclusive, enforced by a compile_error in lib.rs).

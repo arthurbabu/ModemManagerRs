@@ -52,6 +52,30 @@
 
 use core::cell::Cell;
 
+#[cfg(feature = "defmt")]
+use defmt::{error, info, warn};
+#[cfg(not(feature = "defmt"))]
+use log::{error, info, warn};
+
+// Wraps a `Debug`-only value (an error from a generic parameter like
+// `S::Error`, or a foreign crate's error type) for the `{:?}` formatter --
+// defmt's `{:?}` requires `defmt::Format`, not `core::fmt::Debug`, and we
+// can't require every `OpenSerial` impl (or every dependency's error type) to
+// derive it. `defmt::Debug2Format` bridges via the existing `Debug` impl at a
+// small runtime cost; under `log`, `{:?}` already works on `Debug` directly.
+#[cfg(feature = "defmt")]
+macro_rules! fmt_dbg {
+    ($e:expr) => {
+        defmt::Debug2Format(&$e)
+    };
+}
+#[cfg(not(feature = "defmt"))]
+macro_rules! fmt_dbg {
+    ($e:expr) => {
+        $e
+    };
+}
+
 use atat::asynch::Client;
 use atat::{AtatIngress, Config as AtatConfig, DefaultDigester, Ingress, ResponseSlot, UrcChannel};
 use embassy_futures::select::{select, Either};
@@ -214,8 +238,7 @@ impl CellularNetwork {
 impl Drop for CellularNetwork {
     fn drop(&mut self) {
         if !self.shut_down {
-            #[cfg(feature = "log")]
-            log::warn!(
+            warn!(
                 "CellularNetwork dropped without calling shutdown().await -- the modem was not \
                  gracefully powered off and the reconnect task may still be running."
             );
@@ -343,12 +366,9 @@ async fn run_session<S: OpenSerial, P: OutputPin>(
                     c.set(s);
                     s.session_count
                 });
-                #[cfg(feature = "log")]
-                log::info!(
+                info!(
                     "Cellular session #{} up (RSSI {} dBm, {}%)",
-                    session_count,
-                    rssi_dbm,
-                    signal_percent
+                    session_count, rssi_dbm, signal_percent
                 );
                 let writer = modem.client_mut().inner().take();
                 let (pin, client) = modem.release();
@@ -432,18 +452,19 @@ impl<'d, S: OpenSerial, P: OutputPin> CellularNetworkTask<'d, S, P> {
                         }
                         SessionOutcome::Failed(pin, e) => {
                             power_pin = pin;
-                            #[cfg(feature = "log")]
-                            log::warn!("Cellular session setup failed: {:?}; retrying...", e);
+                            warn!(
+                                "Cellular session setup failed: {:?}; retrying...",
+                                fmt_dbg!(e)
+                            );
                             Timer::after(backoff).await;
                             backoff = core::cmp::min(backoff * 2, BACKOFF_MAX);
                             continue;
                         }
                         SessionOutcome::Unrecoverable(e) => {
-                            #[cfg(feature = "log")]
-                            log::error!(
+                            error!(
                                 "Modem initialization failed unrecoverably (power-control pin \
                                  lost): {:?}; stopping.",
-                                e
+                                fmt_dbg!(e)
                             );
                             return;
                         }
@@ -460,8 +481,7 @@ impl<'d, S: OpenSerial, P: OutputPin> CellularNetworkTask<'d, S, P> {
 
                 match select(run_fut, control.wait()).await {
                     Either::First(result) => {
-                        #[cfg(feature = "log")]
-                        log::warn!("PPP link ended: {:?}; reconnecting...", result);
+                        warn!("PPP link ended: {:?}; reconnecting...", fmt_dbg!(result));
                         Timer::after(backoff).await;
                         backoff = core::cmp::min(backoff * 2, BACKOFF_MAX);
                     }
