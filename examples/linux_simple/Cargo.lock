@@ -1016,6 +1016,7 @@ version = "0.4.2"
 dependencies = [
  "atat",
  "chrono",
+ "embassy-futures",
  "embassy-net",
  "embassy-net-ppp",
  "embassy-sync",

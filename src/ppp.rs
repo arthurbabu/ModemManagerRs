@@ -77,6 +77,15 @@ impl<W> Reclaimable<W> {
         self.inner.take().expect("Reclaimable already taken")
     }
 
+    /// Refill after [`Self::take`], so the same `Reclaimable` (and, in turn,
+    /// the same `atat::asynch::Client` wrapping it) can be reused for
+    /// another AT-command session with a freshly (re)opened writer, instead
+    /// of reallocating the client's `'static` buffers each time -- see
+    /// [`crate::cellular::QuectelBG9X::release`]'s docs.
+    pub fn put(&mut self, inner: W) {
+        self.inner = Some(inner);
+    }
+
     fn inner_mut(&mut self) -> &mut W {
         self.inner
             .as_mut()

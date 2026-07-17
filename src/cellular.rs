@@ -1240,6 +1240,24 @@ impl<W: Write, OutputPinGeneric: OutputPin> QuectelBG9X<W, OutputPinGeneric> {
         &mut self.client
     }
 
+    /// Consume this driver instance and reclaim the power-key GPIO pin and
+    /// the AT client.
+    ///
+    /// For callers that power-cycle the modem and rebuild a fresh
+    /// `QuectelBG9X` each session (e.g. [`crate::net::CellularNetwork`]'s
+    /// reconnect loop): both must be retained across cycles rather than
+    /// dropped along with the rest of the driver state, which this makes
+    /// possible. The client's writer is typically empty at this point (see
+    /// [`crate::ppp::Reclaimable::take`]) -- refill it via
+    /// [`crate::ppp::Reclaimable::put`] on `client.inner()` before reusing
+    /// the client for the next `QuectelBG9X::new` call, so the client's
+    /// `'static` response-slot/command buffers don't need to be
+    /// reallocated each cycle.
+    #[cfg(feature = "ppp")]
+    pub fn release(self) -> (OutputPinGeneric, Client<'static, W, INGRESS_BUF_SIZE>) {
+        (self.pwr_key_pin, self.client)
+    }
+
     /// Connect to an MQTT broker.
     ///
     /// # Arguments

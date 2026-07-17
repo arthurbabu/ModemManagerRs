@@ -717,6 +717,7 @@ dependencies = [
  "atat",
  "chrono",
  "defmt",
+ "embassy-futures",
  "embassy-net",
  "embassy-net-ppp",
  "embassy-sync",

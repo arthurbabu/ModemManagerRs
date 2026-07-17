@@ -60,6 +60,12 @@ pub mod tcp;
 #[cfg(feature = "ppp")]
 pub mod ppp;
 
+/// High-level supervisor over [`ppp`]: power on, attach, dial, run the
+/// network stack, and automatically reconnect on failure, wrapped behind one
+/// `init` call and a handle. Only available with the `ppp` feature.
+#[cfg(feature = "ppp")]
+pub mod net;
+
 #[derive(Debug, Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ModemError {

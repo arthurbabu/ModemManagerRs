@@ -64,6 +64,10 @@ embassy-net = { version = "0.9.1", optional = true, default-features = false, fe
     "dns",
 ] }
 embassy-net-ppp = { version = "0.3.0", optional = true }
+# `net`'s reconnect supervisor races the AT-command ingress pump / an active
+# PPP session against pause/shutdown control signals via `select` -- portable
+# across both runtimes, unlike a `tokio::select!`/executor-specific choice.
+embassy-futures = { version = "0.1.2", optional = true }
 # `webpki`-based CA-chain verification is std-only upstream (see the `std`
 # feature below); the `embassy`/no_std path still gets the TLS transport, just
 # without automatic certificate verification out of the box.
@@ -108,4 +112,4 @@ embassy = []
 # Second, lower-level networking path: dial the modem into PPP data mode and
 # run a full `embassy_net::Stack` over it instead of the modem's own
 # AT-command socket engine (`tcp`, above). Additive to either runtime feature.
-ppp = ["dep:embassy-net", "dep:embassy-net-ppp", "dep:embedded-tls", "dep:rand_core"]
+ppp = ["dep:embassy-net", "dep:embassy-net-ppp", "dep:embedded-tls", "dep:rand_core", "dep:embassy-futures"]
