@@ -1,0 +1,126 @@
+[package]
+name = "modem-manager-rs"
+description = "Rust embedded-hal driver for the Quectel BG9X cellular modems"
+homepage = "https://gitlab.com/scrobotics/embedded-rs/quectel-atat-rs/"
+authors = ["Jorge Muñoz", "Xabier Crespo <x.crespo@scrobotics.es>"]
+license = "MIT"
+keywords = ["quectel", "bg95", "modem", "cellular"]
+categories = ["embedded"]
+version = "0.4.2"
+edition = "2021"
+
+[dependencies]
+log = { version = "0.4.19", default-features = false , optional = true}
+atat = { git="https://github.com/arthurbabu/atat.git", features = [
+    "derive",
+    "bytes",
+    "hex_str_arrays",
+] }
+
+static_cell = "2.1.0"
+thiserror = { version = "2.0.17", default-features = false }
+embedded-hal = "1.0.0"
+# `macros` gives us the compile-time `format_description!` so timestamp parsing
+# needs no allocator (works on `no_std` embassy targets without `alloc`).
+time = { version = "0.3.45", default-features = false, features = [
+    "parsing",
+    "macros",
+] }
+# `chrono` (no_std, no allocator) is used to expose network time as a
+# `DateTime<Utc>`; only `DateTime::from_timestamp` / `Utc` are needed.
+chrono = { version = "0.4.38", default-features = false }
+
+# Blocking `Write` impl for `&mut [u8]`, used by several `AtatCmd::write`
+# implementations in `quectel_atat/mod.rs` to serialize into a local buffer --
+# unrelated to the runtime's serial transport (which is always
+# `embedded-io-async`, below).
+embedded-io = "0.7.1"
+
+# The driver is written once as `async` and runs unchanged on both runtimes:
+# `std` (any executor -- tokio in the examples) and `embassy` (`no_std`). Only
+# `embassy-time`'s backend (selected via feature, below) and how the caller
+# wires up serial I/O differ between the two.
+embassy-time = "0.5.1"
+embedded-io-async = "0.7.0"
+# `embedded-nal-async` exposes the async TCP-socket traits the modem sockets
+# (`tcp`) implement.
+embedded-nal-async = "0.9.0"
+# `embassy-sync` provides the async Mutex used to share the modem between the
+# socket client and its open connections.
+embassy-sync = "0.8.0"
+defmt = { version = "1.1.1", optional = true}
+heapless = { version = "0.9.3", default-features = false}
+
+# `ppp` feature: a second, lower-level path that dials the modem into PPP
+# data mode (`ATD*99***<cid>#`) and hands the raw UART to `embassy-net-ppp`,
+# giving a full `embassy_net::Stack` (real DNS, UDP, concurrent TCP) instead
+# of the modem's own AT-command-driven socket engine (`tcp`, above). Written
+# once, generic over both runtimes, same as the rest of the driver.
+embassy-net = { version = "0.9.1", optional = true, default-features = false, features = [
+    "proto-ipv4",
+    "medium-ip",
+    "tcp",
+    "udp",
+    "dns",
+] }
+embassy-net-ppp = { version = "0.3.0", optional = true }
+# `net`'s reconnect supervisor races the AT-command ingress pump / an active
+# PPP session against pause/shutdown control signals via `select` -- portable
+# across both runtimes, unlike a `tokio::select!`/executor-specific choice.
+embassy-futures = { version = "0.1.2", optional = true }
+# `webpki`-based CA-chain verification is std-only upstream (see the `std`
+# feature below); the `embassy`/no_std path still gets the TLS transport, just
+# without automatic certificate verification out of the box.
+embedded-tls = { version = "0.19.0", optional = true, default-features = false }
+# Only the `RngCore`/`CryptoRng` traits are used (the caller supplies the
+# actual RNG -- `OsRng` under `std`, a HW RNG peripheral under `embassy`).
+rand_core = { version = "0.6", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "time"] }
+
+[features]
+# `std` is the default runtime so `cargo build` / `cargo test` work out of the box.
+default = ["bg95", "std", "log"]
+
+# Chip selection (mutually exclusive; enforced by a compile_error in lib.rs).
+# `bg95`/`bg96`  -> Cat-M / NB-IoT / GSM (band lists differ only).
+# `eg916u`       -> LTE Cat 1bis + GSM fallback.
+bg95 = []
+bg96 = []
+eg916u = []
+# `?` (weak dependency feature) forwards `defmt` into `embassy-net`/
+# `embassy-net-ppp` only if the optional `ppp` feature already pulled them in
+# -- otherwise this would force-enable those deps for everyone. Needed
+# because `net.rs` formats their error types with `{:?}` in its `defmt`-or-
+# `log` status/reconnect logging.
+defmt = [
+    "dep:defmt",
+    "atat/defmt",
+    "heapless/defmt",
+    "embassy-net?/defmt",
+    "embassy-net-ppp?/defmt",
+]
+log = ["dep:log", "atat/log"]
+
+# Runtime selection (mutually exclusive, enforced by a compile_error in lib.rs).
+# Both are `async`; they differ only in `no_std`-ness and the `embassy-time`
+# backend that provides the driver's delays/timeouts.
+# `std`     -> hosted OS, any executor (tokio in the examples), embassy-time's
+#              std backend.
+# `embassy` -> bare-metal `no_std`, embassy executor, embassy-time's embedded
+#              backend (registered by the downstream HAL).
+std = [
+    "embassy-time/std",
+    "embassy-time/generic-queue-8",
+    # `embedded-tls`'s CA-chain (`webpki`) verifier is std-only upstream; wire
+    # it in automatically whenever both `std` and `ppp` are enabled.
+    "embedded-tls?/std",
+    "embedded-tls?/webpki",
+]
+embassy = []
+
+# Second, lower-level networking path: dial the modem into PPP data mode and
+# run a full `embassy_net::Stack` over it instead of the modem's own
+# AT-command socket engine (`tcp`, above). Additive to either runtime feature.
+ppp = ["dep:embassy-net", "dep:embassy-net-ppp", "dep:embedded-tls", "dep:rand_core", "dep:embassy-futures"]
