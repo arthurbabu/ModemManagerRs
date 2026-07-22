@@ -11,7 +11,7 @@ edition = "2021"
 readme = "README.md"
 
 [patch.crates-io]
-atat = { version = "0.24.1", branch = "main"}
+atat = { git = "https://github.com/arthurbabu/atat.git" }
 
 [dependencies]
 log = { version = "0.4.19", default-features = false , optional = true}

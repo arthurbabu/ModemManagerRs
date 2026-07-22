@@ -26,14 +26,14 @@ compile_error!(
 
 use thiserror::Error;
 
+mod chip;
 pub mod cellular;
 pub mod quectel_atat;
 
 /// Which transport a modem-backed socket uses.
 ///
-/// Passed to the socket wrappers ([`tcp`] under `embassy`, [`tcp_std`] under
-/// `std`) to select between the modem's plain-TCP and TLS engines per
-/// connection.
+/// Passed to the [`tcp`] socket wrappers (shared by both `std` and `embassy`)
+/// to select between the modem's plain-TCP and TLS engines per connection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Transport {
     /// Plain TCP (`AT+QIOPEN` / `QISEND` / `QIRD` / `QICLOSE`).

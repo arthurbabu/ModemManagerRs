@@ -2,6 +2,8 @@ use atat::atat_derive::AtatEnum;
 use atat::heapless::String;
 use atat::heapless_bytes::Bytes;
 
+use crate::chip::ChipProfile;
+
 /// Echo on
 #[derive(Debug, Clone, PartialEq, AtatEnum)]
 #[repr(u8)]
@@ -238,16 +240,9 @@ impl Band for GsmBands {
 }
 impl Band for EmtcBands {
     fn all_bands_mask() -> u128 {
-        #[cfg(feature = "bg96")]
-        return 0xB0E189F;
-        #[cfg(feature = "bg95")]
-        return 0x100182000000004F0E189F;
-        // TODO(eg916u): confirm the LTE Cat 1bis band mask against the EG916U
-        // datasheet. EG916U is not a Cat-M part; this reuses the EMTC field of
-        // AT+QCFG="band" to carry the LTE band mask. Provisional value covers
-        // common EU LTE-FDD bands 1/3/5/8/20/28.
-        #[cfg(feature = "eg916u")]
-        return 0x800800B5;
+        // Sourced from the active chip's `ChipProfile` impl (`src/chip/`) --
+        // single source of truth per chip instead of inline cfg here.
+        crate::chip::ActiveChip::EMTC_ALL_BANDS_MASK
     }
     fn as_u8(self) -> u8 {
         self as u8
@@ -261,15 +256,9 @@ impl Band for EmtcBands {
 }
 impl Band for NbIotBands {
     fn all_bands_mask() -> u128 {
-        #[cfg(feature = "bg96")]
-        return 0xB0E189F;
-        #[cfg(feature = "bg95")]
-        return 0x1001C200000000490E189F;
-        // TODO(eg916u): EG916U (Cat 1bis) has no NB-IoT RAT. Left at 0 until the
-        // EG916U band configuration is confirmed; selecting NB-IoT `Any` on this
-        // chip therefore requests no bands.
-        #[cfg(feature = "eg916u")]
-        return 0x0;
+        // Sourced from the active chip's `ChipProfile` impl (`src/chip/`) --
+        // single source of truth per chip instead of inline cfg here.
+        crate::chip::ActiveChip::NB_ALL_BANDS_MASK
     }
     fn as_u8(self) -> u8 {
         self as u8

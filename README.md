@@ -32,29 +32,38 @@ The crate has two independent axes of Cargo features.
 
 **Runtime selection** (mutually exclusive — enable exactly one):
 
-* `std` *(default)* — **blocking** driver for hosts. Uses `std::thread`/`std::time`
-  for delays and timeouts and the `atat` blocking client. This is what the Linux
-  example and `cargo test` use.
-* `embassy` — **async** (`no_std`) driver for embedded systems. Uses
-  [`embassy-time`](https://docs.rs/embassy-time) for delays/timeouts and the
-  `atat` async client (`embedded-io-async`). Every driver method is `async` and
-  must be `.await`ed.
+* `std` *(default)* — hosted OS, driven by any executor (tokio in the
+  examples).
+* `embassy` — bare-metal `no_std`, driven by the embassy executor.
 
-The two runtimes are generated from a single source: the driver logic is written
-once as `async` and the [`maybe-async-cfg`](https://docs.rs/maybe-async-cfg)
-macro produces the blocking version under `std` and the async version under
-`embassy`. The public method names are identical across both runtimes; only the
-`async`/`.await` differs.
+Both are **async**: the driver logic is written once as `async fn` and is
+identical on both backends. They differ only in `no_std`-ness and which
+`embassy-time` backend is registered (`embassy-time`'s `std` timer queue under
+`std`, its embedded time driver under `embassy`) — see the `compat` module in
+`src/cellular/mod.rs`. Every driver method is `async` and must be `.await`ed
+on both.
 
 ```toml
-# Blocking, on a host (default):
+# Hosted (default), driven by tokio or any other executor:
 modem-manager-rs = "0.4"
 
-# Async, on an embedded target with Embassy:
+# no_std, on an embedded target with Embassy:
 modem-manager-rs = { version = "0.4", default-features = false, features = ["bg95", "embassy"] }
 ```
 
 Building with both runtimes, or with neither, is a compile error.
+
+## Architecture
+
+Per-chip AT-command differences (band masks, RAT-attach polling, firmware
+revision quirks) are factored into a small `ChipProfile` trait in `src/chip/`,
+implemented once per chip (`src/chip/bg95.rs`, `bg96.rs`, `eg916u.rs`) and
+selected at compile time — the `no_std`/static-dispatch analogue of Linux
+ModemManager's per-vendor plugin. `QuectelBG9X`'s methods are grouped into
+capability modules under `src/cellular/` (`power`, `sim`, `config`,
+`registration`, `bearer`, `mqtt`, `socket`, `gnss`, `file`), mirroring how
+ModemManager splits modem functionality into separate D-Bus interfaces. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for a walkthrough of adding a new chip.
 
 ## TCP + mutual TLS sockets
 
@@ -103,7 +112,6 @@ directly when you need a hostname for SNI/hostname verification.
 - [ ] Confirm EG916U band lists / RAT config against the datasheet
 - [ ] Wire `+QSSLURC: "closed"` into `TlsSocket::read` for EOF detection
 - [ ] Make modem user configurable (AT+QCFG commands)
-- [ ] Add an Embassy (async) example
 
 ## Examples
 
@@ -117,6 +125,13 @@ directly when you need a hostname for SNI/hostname verification.
     cd examples/esp32c3_connect_and_send_mqtt
     cargo run
     ```
+* `stm32h7_ppp_https`: bare-metal `embassy`/`no_std` example on an STM32H7,
+  dialing the modem into PPP data mode and running a full `embassy_net` stack
+  over it instead of the AT-command-driven socket engine.
+    ```
+    cd examples/stm32h7_ppp_https
+    cargo run --release
+    ```
 
 For a more complete example visit Tested with the [Dark Sky Meter Firmware](https://gitlab.com/scrobotics/optical-makerspace/dark-sky-meter-fw).
 
@@ -128,3 +143,5 @@ This tool is released under the MIT license, hence allowing commercial use of th
 ## Contributing
 
 The project is Open Source but it's been heavily design to fit our needs, in particular for the [Dark Sky Meter Firmware](https://gitlab.com/scrobotics/optical-makerspace/dark-sky-meter-fw).
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for a walkthrough of adding support for a new modem chip.
