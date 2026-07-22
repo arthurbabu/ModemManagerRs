@@ -1,13 +1,17 @@
 [package]
 name = "modem-manager-rs"
 description = "Rust embedded-hal driver for the Quectel BG9X cellular modems"
-homepage = "https://gitlab.com/scrobotics/embedded-rs/quectel-atat-rs/"
-authors = ["Jorge Muñoz", "Xabier Crespo <x.crespo@scrobotics.es>"]
+homepage = "https://github.com/arthurbabu/ModemManagerRs"
+authors = ["Jorge Muñoz", "Xabier Crespo <x.crespo@scrobotics.es>", "Arthur Babu"]
 license = "MIT"
-keywords = ["quectel", "bg95", "modem", "cellular"]
+keywords = ["quectel", "bg95", "eg916", "modem", "cellular"]
 categories = ["embedded"]
 version = "0.4.2"
 edition = "2021"
+readme = "README.md"
+
+[patch.crates-io]
+atat = { version = "0.24.1", branch = "main"}
 
 [dependencies]
 log = { version = "0.4.19", default-features = false , optional = true}

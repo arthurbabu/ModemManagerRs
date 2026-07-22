@@ -1,6 +1,6 @@
-# AT Driver for the Quectel BG9X family of modems
+# AT Driver for the Quectel BG9X and EG916 family of modems
 
-This respository contains a driver for the [Quectel](https://www.quectel.com/) BG95/BG96 modems. The driver is built on top of the [atat crate](https://docs.rs/atat/latest/atat/).
+This respository contains a driver for the [Quectel](https://www.quectel.com/) BG95/BG96/EG916 modems. The driver is built on top of the [atat crate](https://docs.rs/atat/latest/atat/) and is based on [this crate](https://gitlab.com/scrobotics/embedded-rs/quectel-atat-rs/)
 
 The main features are:
 
@@ -8,6 +8,7 @@ The main features are:
 * Connect to an MQTT broker and publish data (with optional SSL/TLS support)
 * Uses LTE-M with fallback to 2G
 * SSL/TLS configuration for secure MQTT connections
+* Embassy net stack with PPP dial mode
 * TCP+TLS sockets (including **mutual TLS**) exposed via the
   [`embedded-nal-async`](https://docs.rs/embedded-nal-async) traits (async /
   `embassy` only)
